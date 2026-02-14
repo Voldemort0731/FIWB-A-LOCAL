@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+venv/
+env/
+.env
+*.pyc
+__pycache__/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Other
+*.log
+fiwb-backend/env
+fiwb-backend/.env
+fiwb-backend/fiwb.db
+fiwb-backend/fiwb.db-shm
+fiwb-backend/fiwb.db-wal
