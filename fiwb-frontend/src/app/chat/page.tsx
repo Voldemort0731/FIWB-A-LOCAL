@@ -504,7 +504,7 @@ function ChatBody() {
     }, [searchParams]);
 
     return (
-        <div className="flex h-screen bg-white dark:bg-[#050505] text-gray-900 dark:text-white font-sans selection:bg-blue-500/30 overflow-hidden transition-colors duration-500">
+        <div className="flex h-screen w-full bg-white dark:bg-[#050505] text-gray-900 dark:text-white font-sans selection:bg-blue-500/30 overflow-hidden transition-colors duration-500">
             <Sidebar
                 threads={threads}
                 activeThreadId={activeThreadId}
@@ -569,7 +569,7 @@ function ChatBody() {
                             {messages.map((msg, i) => (
                                 <motion.div
                                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={i}
-                                    className={clsx("flex flex-col max-w-[85%] space-y-2 group/message", msg.role === "user" ? "ml-auto items-end" : "items-start")}
+                                    className={clsx("flex flex-col max-w-[90%] lg:max-w-[80%] space-y-2 group/message", msg.role === "user" ? "ml-auto items-end" : "items-start")}
                                 >
                                     <div className={clsx(
                                         "px-6 py-4 rounded-[1.5rem] shadow-2xl relative overflow-hidden transition-colors duration-500",
@@ -624,7 +624,7 @@ function ChatBody() {
                                         initial={{ opacity: 0, y: 10 }}
                                         animate={{ opacity: 1, y: 0 }}
                                         exit={{ opacity: 0, scale: 0.95 }}
-                                        className="flex flex-col items-start max-w-[85%] space-y-4"
+                                        className="flex flex-col items-start max-w-[90%] lg:max-w-[80%] space-y-4"
                                     >
                                         <div className="glass-dark border border-blue-500/20 rounded-[1.5rem] px-8 py-6 shadow-2xl bg-white dark:bg-black/40 relative overflow-hidden group">
                                             <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 animate-pulse" />
@@ -710,7 +710,7 @@ function ChatBody() {
                 </div>
 
                 <footer className="p-8 relative z-20">
-                    <div className="max-w-4xl mx-auto space-y-4">
+                    <div className="max-w-6xl mx-auto space-y-4">
                         <AnimatePresence>
                             {replyingTo && (
                                 <motion.div
@@ -793,10 +793,8 @@ function ChatBody() {
 
 export default function ChatPage() {
     return (
-        <div className="flex h-screen bg-white dark:bg-[#050505] overflow-hidden">
-            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-blue-500 font-bold tracking-widest animate-pulse uppercase bg-[#050505]">Initializing Neural Link...</div>}>
-                <ChatBody />
-            </Suspense>
-        </div>
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-blue-500 font-bold tracking-widest animate-pulse uppercase bg-[#050505]">Initializing Neural Link...</div>}>
+            <ChatBody />
+        </Suspense>
     );
 }
