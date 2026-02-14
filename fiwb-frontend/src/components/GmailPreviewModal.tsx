@@ -44,12 +44,14 @@ export default function GmailPreviewModal({ isOpen, onClose, email }: GmailPrevi
                                     <div className="flex flex-wrap gap-3 text-xs font-bold text-gray-500 uppercase tracking-wider">
                                         <div className="flex items-center gap-1.5">
                                             <Calendar size={12} />
-                                            {email.date === "Recent" ? "Recent" : new Date(email.date).toLocaleDateString(undefined, {
-                                                weekday: 'long',
-                                                year: 'numeric',
-                                                month: 'long',
-                                                day: 'numeric'
-                                            })}
+                                            {(email.date === "Recent" || (!email.date && !email.created_at))
+                                                ? "Recent"
+                                                : new Date(email.created_at || email.date).toLocaleDateString(undefined, {
+                                                    weekday: 'long',
+                                                    year: 'numeric',
+                                                    month: 'long',
+                                                    day: 'numeric'
+                                                })}
                                         </div>
                                     </div>
                                 </div>
@@ -66,7 +68,10 @@ export default function GmailPreviewModal({ isOpen, onClose, email }: GmailPrevi
                         <div className="p-8 overflow-y-auto scrollbar-premium flex-1">
                             <div className="prose dark:prose-invert prose-sm max-w-none">
                                 <p className="whitespace-pre-wrap text-gray-700 dark:text-gray-300 leading-relaxed text-sm">
-                                    {email.description}
+                                    {(email.content || email.description || "")
+                                        .split('\n\nCONTENT:')[0]
+                                        .replace('SUMMARY: ', '')
+                                        .trim() || "No content available."}
                                 </p>
                             </div>
                         </div>
