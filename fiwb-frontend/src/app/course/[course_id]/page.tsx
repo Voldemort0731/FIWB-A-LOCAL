@@ -123,6 +123,7 @@ export default function CoursePage() {
         assignment: "Assignments",
         announcement: "Announcements",
         material: "Course Materials",
+        drive_file: "Drive Files",
         other: "Other"
     };
 

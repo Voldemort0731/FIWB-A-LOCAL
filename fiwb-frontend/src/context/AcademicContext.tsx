@@ -94,7 +94,15 @@ export function AcademicProvider({ children }: { children: React.ReactNode }) {
 
         // Auto-refresh every 5 minutes while active
         const interval = setInterval(refreshData, 5 * 60 * 1000);
-        return () => clearInterval(interval);
+
+        // Listen for drive-sync-refresh events from DriveSyncModal
+        const handleDriveRefresh = () => refreshData();
+        window.addEventListener('drive-sync-refresh', handleDriveRefresh);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('drive-sync-refresh', handleDriveRefresh);
+        };
     }, [refreshData]);
 
     return (

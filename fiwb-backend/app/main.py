@@ -38,7 +38,8 @@ from app.intelligence.scheduler import start_scheduler
 
 @app.on_event("startup")
 async def on_startup():
-    start_scheduler()
+    # start_scheduler()  # Manually disabled to end background tasks
+    pass
 
 @app.get("/")
 async def root():

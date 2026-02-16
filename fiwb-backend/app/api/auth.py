@@ -57,7 +57,7 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
     Bypasses slow library discovery docs and synchronous network calls.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             # 1. Exchange Authorization Code for Tokens
             # This is the standard OAuth2 token swap
             token_resp = await client.post(
@@ -119,14 +119,25 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
             db.commit()
             db.refresh(user)
             
-            # 4. Defer Background Tasks
+            # 4. Defer Background Tasks — FAST FIRST, DEEP LATER
             async def run_initial_sync():
-                await asyncio.sleep(0.1) # Minimal delay
                 try:
+                    # Phase 1: Quick classroom metadata (courses list only)
+                    # This makes the dashboard show courses as fast as possible
+                    service = LMSSyncService(access_token, email, refresh_token)
+                    await service.sync_all_courses()
+                    logger.info(f"Phase 1 (classroom meta) done for {email}")
+                except Exception as e:
+                    logger.error(f"Phase 1 sync fail for {email}: {e}")
+                
+                try:
+                    # Phase 2: Drive + Gmail (deferred, non-blocking)
+                    await asyncio.sleep(5)  # Delay to let UI settle and user interact
                     from app.intelligence.scheduler import sync_all_for_user
                     await sync_all_for_user(email)
+                    logger.info(f"Phase 2 (full sync) done for {email}")
                 except Exception as e:
-                    print(f"Initial sync fail: {e}")
+                    logger.error(f"Phase 2 sync fail for {email}: {e}")
 
             background_tasks.add_task(run_initial_sync)
             

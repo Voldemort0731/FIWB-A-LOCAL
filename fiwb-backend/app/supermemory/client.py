@@ -138,3 +138,16 @@ class SupermemoryClient:
         except Exception as e:
             print(f"DEBUG SM: Error adding memory: {e}")
             return None
+
+    async def delete_document(self, document_id: str):
+        """Delete a document from Supermemory."""
+        try:
+            response = await self.client.delete(
+                f"{self.base_url}/v3/documents/{document_id}"
+            )
+            response.raise_for_status()
+            print(f"✅ DEBUG SM: Deleted document {document_id}")
+            return True
+        except Exception as e:
+            print(f"❌ DEBUG SM: Error deleting document {document_id}: {e}")
+            return False

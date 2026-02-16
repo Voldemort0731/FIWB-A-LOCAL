@@ -46,10 +46,10 @@ class GmailSyncService:
                         raise e
         return self.service
 
-    async def sync_recent_emails(self, limit=250):
+    async def sync_recent_emails(self, limit=50):
         """
-        Fetches recent emails, extracts deep context acting as a Personal Assistant,
-        and synchronizes insights into the user's Digital Twin memory.
+        Fetches only new emails, processes them up to the limit, 
+        and maintains a strict recent-25 window in both local DB and Supermemory.
         """
         from app.intelligence.memory_agent import MemoryAgent
         
@@ -70,7 +70,7 @@ class GmailSyncService:
             user.courses.append(gmail_course)
             db.commit()
 
-        # Capture all recent activity - Broadened from INBOX to all mail excluding spam/trash
+        # Capture all recent activity - 
         query = "-label:SPAM -label:TRASH"
 
         try:
@@ -87,106 +87,119 @@ class GmailSyncService:
 
         messages = results.get('messages', [])
         
-        # 2. Parallel Processing with Semaphore
-        semaphore = asyncio.Semaphore(1) # Reduced concurrency to prevent SSL errors
+        # 1. Identify only NEW messages (stop at first existing)
+        new_messages = []
+        for msg in messages:
+            if db.query(Material).filter(Material.id == msg['id']).first():
+                break
+            new_messages.append(msg)
+            
+        if not new_messages:
+            logger.info(f"No new emails for {self.user_email}")
+            db.close()
+            return 0
+
+        logger.info(f"Syncing {len(new_messages)} new emails for {self.user_email}")
         stats = {"synced_count": 0}
 
         async def process_message(msg):
-            async with semaphore:
                 msg_id = msg['id']
-                # Re-check in task session
                 task_db = SessionLocal()
                 try:
-                    existing = task_db.query(Material).filter(Material.id == msg_id).first()
-                    if existing and not existing.user_id:
-                        existing.user_id = user.id
-                        task_db.commit()
-
-                    # Fetch and analyze
+                    # Fetch full content
                     service = await self._get_service()
                     from app.utils.google_lock import GoogleApiLock
                     async with GoogleApiLock.get_lock():
                         message = await asyncio.to_thread(
                             lambda: service.users().messages().get(userId='me', id=msg_id).execute()
                         )
+                    
                     payload = message.get('payload', {})
                     headers = payload.get('headers', [])
                     subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
                     sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown")
                     body_content = self._get_email_body(payload)
-                    # Default "Raw" analysis as fallback
-                    analysis = {"is_relevant": False, "label": "Inbox", "summary": body_content[:200] + "...", "deadline": None}
                     
+                    # Extract Internal Date
+                    internal_date_ms = int(message.get('internalDate', 0))
+                    email_date = datetime.datetime.fromtimestamp(internal_date_ms / 1000.0).isoformat()
+                    
+                    # Analyze
                     try:
-                        # Attempt deep analysis with a strict timeout
-                        analysis_result = await asyncio.wait_for(
+                        analysis = await asyncio.wait_for(
                             self._analyze_email_as_assistant(subject, sender, body_content),
                             timeout=15.0
                         )
-                        if analysis_result:
-                            analysis = analysis_result
-                    except Exception as ai_err:
-                        logger.warning(f"AI analysis failed for {msg_id}, using raw fallback: {ai_err}")
+                    except:
+                        analysis = {"is_relevant": False}
 
-                    label = analysis.get('label', 'Inbox')
-                    summary = analysis.get('summary', body_content[:200] + "...")
-                    
-                    if existing:
-                        existing.title = f"📧 {label.upper()}: {subject}"
-                        existing.content = f"SUMMARY: {summary}\n\nCONTENT:\n{body_content[:2000]}"
-                        existing.created_at = datetime.datetime.fromtimestamp(int(message.get('internalDate'))/1000.0).isoformat()
-                        existing.due_date = analysis.get('deadline')
-                        task_db.commit()
-                    else:
-                        new_material = Material(
-                            id=msg_id,
-                            user_id=user.id,
-                            course_id="GMAIL_INBOX",
-                            title=f"📧 {label.upper()}: {subject}",
-                            content=f"SUMMARY: {summary}\n\nCONTENT:\n{body_content[:2000]}",
-                            type="assistant_knowledge",
-                            created_at=datetime.datetime.fromtimestamp(int(message.get('internalDate'))/1000.0).isoformat(),
-                            source_link=f"https://mail.google.com/mail/u/0/#inbox/{msg_id}",
-                            due_date=analysis.get('deadline')
-                        )
-                        task_db.add(new_material)
-                        task_db.commit()
-                        stats["synced_count"] += 1
+                    # Save to Local DB
+                    new_material = Material(
+                        id=msg_id,
+                        user_id=user.id,
+                        course_id="GMAIL_INBOX",
+                        title=f"Email: {subject}",
+                        content=body_content[:2000],
+                        type=analysis.get('label', 'context'),
+                        created_at=email_date,
+                        attachments=json.dumps(analysis.get('attachments', [])),
+                        source_link=f"https://mail.google.com/mail/u/0/#inbox/{msg_id}"
+                    )
+                    task_db.add(new_material)
+                    task_db.commit()
+                    stats["synced_count"] += 1
 
-                    # Index in Supermemory (only if actually relevant/analyzed well)
+                    # Index in Supermemory
                     if analysis.get('is_relevant'):
                         await self.sm_client.add_document(
-                            content=f"SUBJECT: {subject}\nFROM: {sender}\n\n{analysis.get('summary')}\n\nDEEP CONTEXT:\n{analysis.get('deep_context')}\n\nRAW BODY:\n{body_content[:1000]}",
-                            title=f"Assistant Knowledge: {subject}",
+                            content=f"SUBJECT: {subject}\nFROM: {sender}\n\n{analysis.get('summary')}\n\nDEEP CONTEXT:\n{analysis.get('deep_context')}\n\nBODY PREVIEW:\n{body_content[:1000]}",
+                            title=f"Email: {subject}",
                             description=analysis.get('summary'),
                             metadata={
                                 "user_id": self.user_email,
+                                "gmail_id": msg_id,
                                 "type": "assistant_knowledge",
                                 "source": "gmail",
                                 "category": analysis.get('label'),
-                                "deadline": analysis.get('deadline'),
-                                "sender": sender
-                            }
-                        )
-                    
-                    if analysis.get('synthesize_to_memory', False):
-                        from app.intelligence.memory_agent import MemoryAgent
-                        await MemoryAgent.synthesize_and_save(
-                            user_email=self.user_email,
-                            query=f"Internal Sync: {subject} from {sender}",
-                            response=f"I've updated your neural workspace with information from an email regarding '{subject}'. {analysis.get('summary')}",
-                            additional_context={
-                                "source": "gmail_sync",
-                                "interaction_type": "background_learning",
-                                "email_label": analysis.get('label')
+                                "date": email_date
                             }
                         )
                 except Exception as e:
-                    logger.error(f"Error processing email {msg_id}: {e}")
+                    logger.error(f"Error processing message {msg_id}: {e}")
                 finally:
                     task_db.close()
 
-        await asyncio.gather(*(process_message(m) for m in messages))
+        # Process new messages in batches
+        batch_size = 5
+        for i in range(0, len(new_messages), batch_size):
+            batch = new_messages[i:i + batch_size]
+            await asyncio.gather(*(process_message(m) for m in batch))
+            await asyncio.sleep(0.1)
+        
+        # Cleanup: Keep only top 25 recent emails locally AND in Supermemory
+        try:
+            from sqlalchemy import or_
+            all_emails = db.query(Material).filter(
+                Material.course_id == "GMAIL_INBOX",
+                or_(Material.user_id == user.id, Material.user_id == None)
+            ).order_by(Material.created_at.desc()).all()
+            
+            if len(all_emails) > 25:
+                for old_email in all_emails[25:]:
+                    # Purge from Supermemory
+                    sm_res = await self.sm_client.search(
+                        query=" ", 
+                        filters={"AND": [{"key": "gmail_id", "value": old_email.id}]}
+                    )
+                    for doc in sm_res.get('results', []):
+                        await self.sm_client.delete_document(doc.get('documentId') or doc.get('id'))
+                    
+                    db.delete(old_email)
+                    
+                db.commit()
+                logger.info(f"Pruned extra emails. Local & Supermemory now restricted to most recent 25.")
+        except Exception as e:
+            logger.error(f"Gmail detailed cleanup failed: {e}")
         
         db.close()
         return stats["synced_count"]

@@ -51,12 +51,12 @@ class MoodleSyncService:
                 db.commit()
 
                 # 2. Sync Course Content
-                await self._sync_course_content(db, course_data['id'], course_id, course_name)
+                await self._sync_course_content(db, course_data['id'], course_id, course_name, user.id)
                 
         finally:
             db.close()
 
-    async def _sync_course_content(self, db, moodle_id: int, db_id: str, course_name: str):
+    async def _sync_course_content(self, db, moodle_id: int, db_id: str, course_name: str, user_id: int):
         """Sync course contents (resources, modules)."""
         contents = await self.client.get_course_contents(moodle_id)
         if not contents:
@@ -71,7 +71,11 @@ class MoodleSyncService:
                 
                 # Check duplication in DB
                 existing = db.query(Material).filter(Material.id == mod_id).first()
-                if existing: continue
+                if existing:
+                    if not existing.user_id:
+                        existing.user_id = user_id
+                        db.commit()
+                    continue
 
                 content_parts = [f"Moodle Resource in {course_name}", f"Section: {section.get('name', 'General')}"]
                 description = mod.get('description', '')
@@ -100,6 +104,7 @@ class MoodleSyncService:
                 # 1. Add to Local DB
                 db_mat = Material(
                     id=mod_id,
+                    user_id=user_id,
                     course_id=db_id,
                     title=title,
                     content=description or title,

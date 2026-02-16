@@ -71,10 +71,21 @@ async def get_course_materials(course_id: str, user_email: str, db: Session = De
 
     # --- Strategy: Try Local DB First for browsing ---
     # This ensures immediate availability even if vector indexing is slow
+    # Include materials for this user OR materials with no user_id (legacy/shared)
+    from sqlalchemy import or_
     db_materials = db.query(Material).filter(
         Material.course_id == course_id,
-        Material.user_id == user.id
+        or_(Material.user_id == user.id, Material.user_id == None)
     ).order_by(Material.created_at.desc()).all()
+    
+    # Also fix orphaned materials: assign user_id where missing
+    for m in db_materials:
+        if m.user_id is None:
+            m.user_id = user.id
+    try:
+        db.commit()
+    except:
+        db.rollback()
     
     if db_materials:
         print(f"DEBUG: Found {len(db_materials)} materials in local DB for {course_id}")
@@ -85,6 +96,9 @@ async def get_course_materials(course_id: str, user_email: str, db: Session = De
                 atts = json.loads(m.attachments) if m.attachments else []
             except:
                 atts = []
+            
+            # Determine source based on course
+            source_name = "Google Drive" if course_id == "GOOGLE_DRIVE" else "Google Classroom"
                 
             materials.append({
                 "id": m.id,
@@ -93,7 +107,7 @@ async def get_course_materials(course_id: str, user_email: str, db: Session = De
                 "created_at": m.created_at or datetime.utcnow().isoformat(),
                 "due_date": m.due_date,
                 "content": m.content or "",
-                "source": "Google Classroom",
+                "source": source_name,
                 "attachments": atts,
                 "category": m.type,
                 "source_link": m.source_link

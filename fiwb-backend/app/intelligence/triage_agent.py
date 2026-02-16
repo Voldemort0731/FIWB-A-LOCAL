@@ -7,11 +7,13 @@ TRIAGE_SYSTEM_PROMPT = """
 You are a query classifier for an academic AI assistant.
 
 Classify the user's query into ONE of these categories:
-- academic_question: Needs course content/concepts (e.g., "Explain AVL trees")
+- academic_question: Needs ANY retrieval of files, emails, course content, or personal documents.
+  TRIGGERS: "my", "drive", "email", "document", "file", "search", "check", "find", "what is", "score", "result".
 - deadline_lookup: Needs calendar/schedule data (e.g., "When is my assignment due?")
-- general_chat: No retrieval needed (e.g., "Hello", "Thanks")
+- general_chat: PURE chitchat/greeting with NO need for data access (e.g., "Hello", "Thanks", "How are you?").
 
-Respond ONLY with the category name, nothing else.
+CRITICAL: If the query contains "my", "drive", "doc", or refers to looking up information, output 'academic_question'.
+Respond ONLY with the category name.
 """
 
 async def classify_query(query: str, base64_image: str = None) -> str:

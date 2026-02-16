@@ -21,12 +21,12 @@ async def search_materials(q: str, user_email: str, db: Session = Depends(get_db
     # 1. Search in local database
     from sqlalchemy import or_
     materials = db.query(Material).filter(
-        Material.user_id == user.id,
+        or_(Material.user_id == user.id, Material.user_id == None),
         or_(
             Material.title.ilike(f"%{q}%"),
             Material.content.ilike(f"%{q}%")
         )
-    ).all()
+    ).order_by(Material.created_at.desc()).limit(50).all()
     
     results = []
     seen_ids = set()

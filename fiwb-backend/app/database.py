@@ -5,26 +5,37 @@ from app.config import settings
 
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
-connect_args = {"check_same_thread": False} if "sqlite" in SQLALCHEMY_DATABASE_URL else {}
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, 
-    connect_args=connect_args,
-    pool_size=50,
-    max_overflow=100,
-    pool_timeout=60
-)
-
-# Enable WAL mode for SQLite to support concurrency (Better for multiple users)
-from sqlalchemy import event
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    if "sqlite" in SQLALCHEMY_DATABASE_URL:
+# Configuration for different database types
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    # SQLite configuration
+    connect_args = {"check_same_thread": False}
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, 
+        connect_args=connect_args
+    )
+    
+    # Enable WAL mode for SQLite
+    from sqlalchemy import event
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
+else:
+    # PostgreSQL configuration (Production ready)
+    # Fix for Railway/Render which might provide 'postgres://' instead of 'postgresql://'
+    if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+        SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        pool_size=20,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=1800,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

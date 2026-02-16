@@ -168,18 +168,15 @@ class LMSSyncService:
             existing_ids = await self._get_existing_source_ids(course_id)
             logger.info(f"  Existing items in Supermemory for {course_id}: {len(existing_ids)}")
 
-            # CLEAR EXISTING LOCAL DATA FOR THIS COURSE TO PREVENT DUPLICATES
-            # Since we are doing a full sync, we replace the local cache entirely.
+            # Build a set of existing local material IDs for fast upsert checks
             try:
-                def clear_cache():
-                    db.query(Material).filter(Material.course_id == course_id).delete()
-                    db.commit()
-                
-                await asyncio.to_thread(clear_cache)
-                logger.info(f"  Cleared local cache for course {course_id}")
+                existing_local_ids = set(
+                    row[0] for row in db.query(Material.id).filter(Material.course_id == course_id).all()
+                )
+                logger.info(f"  Existing local materials for course {course_id}: {len(existing_local_ids)}")
             except Exception as e:
-                logger.error(f"Failed to clear local cache for course {course_id}: {e}")
-                db.rollback()
+                logger.error(f"Failed to query existing local materials for course {course_id}: {e}")
+                existing_local_ids = set()
 
             # Sync Coursework (Assignments)
             UsageTracker.log_lms_request(self.user_email, 1, db=db)
@@ -191,45 +188,61 @@ class LMSSyncService:
                 desc = work.get('description', '')[:500]
                 content, attachments = self._format_rich_item(work, due_date_str, "Assignment")
 
-                # 1. Always save to local DB (Material Table) for immediate browsing
-                # 1. Always save to local DB (Material Table) for immediate browsing
+                # 1. Save to local DB (upsert: skip if exists, ensure user_id is set)
                 try:
-                    db_mat = Material(
-                        id=item_id,
-                        user_id=user_id,
-                        course_id=course_id,
-                        title=title,
-                        content=desc,
-                        type="assignment",
-                        due_date=due_date_str,
-                        created_at=work.get('creationTime'),
-                        attachments=json.dumps(attachments),
-                        source_link=work.get('alternateLink')
-                    )
-                    db.add(db_mat)
+                    if item_id in existing_local_ids:
+                        # Update user_id if missing
+                        existing_mat = db.query(Material).filter(Material.id == item_id).first()
+                        if existing_mat and not existing_mat.user_id:
+                            existing_mat.user_id = user_id
+                    else:
+                        db_mat = Material(
+                            id=item_id,
+                            user_id=user_id,
+                            course_id=course_id,
+                            title=title,
+                            content=desc,
+                            type="assignment",
+                            due_date=due_date_str,
+                            created_at=work.get('creationTime'),
+                            attachments=json.dumps(attachments),
+                            source_link=work.get('alternateLink')
+                        )
+                        db.add(db_mat)
+                        existing_local_ids.add(item_id)
                 except Exception as db_e:
                     logger.error(f"Failed to prepare assignment for DB: {db_e}")
                     db.rollback()
 
-                # 2. Sync to Supermemory if not already exists
-                if item_id not in existing_ids:
-                    metadata = {
-                        "user_id": self.user_email,
-                        "course_id": course_id,
-                        "course_name": course_name,
-                        "professor": professor_name,
-                        "type": "assignment",
-                        "due_date": due_date_str,
-                        "source": "google_classroom",
-                        "source_id": item_id,
-                        "created_at": work.get('creationTime'),
-                        "attachments": json.dumps(attachments),
-                        "source_link": work.get('alternateLink')
-                    }
-                    if await self.sm_client.add_document(content, metadata, title=title, description=desc[:200]):
-                        logger.info(f"  -> Synced Assignment to Supermemory: {title}")
-                        existing_ids.add(item_id)
-                        UsageTracker.log_index_event(self.user_email, content=content)
+                    # PHASE 2.5: Deep Parsing of Attachments (New logic)
+                    attachment_text = ""
+                    if work.get('materials'):
+                        logger.info(f"    🔍 Parsing attachments for assignment: {title}")
+                        attachment_text = await self._get_attachments_content(work.get('materials'))
+                    
+                    full_content = content
+                    if attachment_text:
+                        full_content += f"\n\n--- DOCUMENT CONTENT ---\n{attachment_text}"
+
+                    # 2. Sync to Supermemory if not already exists
+                    if item_id not in existing_ids:
+                        metadata = {
+                            "user_id": self.user_email,
+                            "course_id": course_id,
+                            "course_name": course_name,
+                            "professor": professor_name,
+                            "type": "assignment",
+                            "due_date": due_date_str,
+                            "source": "google_classroom",
+                            "source_id": item_id,
+                            "created_at": work.get('creationTime'),
+                            "attachments": json.dumps(attachments),
+                            "source_link": work.get('alternateLink')
+                        }
+                        if await self.sm_client.add_document(full_content, metadata, title=title, description=desc[:200]):
+                            logger.info(f"  -> Synced Assignment to Supermemory: {title}")
+                            existing_ids.add(item_id)
+                            UsageTracker.log_index_event(self.user_email, content=full_content)
             
             # Batch commit for assignments
             try:
@@ -247,44 +260,60 @@ class LMSSyncService:
                 desc = mat.get('description', '')[:500]
                 content, attachments = self._format_rich_item(mat, None, "Course Material")
 
-                # 1. Always save to local DB
+                # 1. Save to local DB (upsert: skip if exists, ensure user_id is set)
                 try:
-                    db_mat = Material(
-                        id=item_id,
-                        user_id=user_id,
-                        course_id=course_id,
-                        title=title,
-                        content=desc,
-                        type="material",
-                        due_date=None,
-                        created_at=mat.get('creationTime'),
-                        attachments=json.dumps(attachments),
-                        source_link=mat.get('alternateLink')
-                    )
-                    db.add(db_mat)
-                    logger.info(f"  + Added Material to Local DB: {title}")
+                    if item_id in existing_local_ids:
+                        existing_mat = db.query(Material).filter(Material.id == item_id).first()
+                        if existing_mat and not existing_mat.user_id:
+                            existing_mat.user_id = user_id
+                    else:
+                        db_mat = Material(
+                            id=item_id,
+                            user_id=user_id,
+                            course_id=course_id,
+                            title=title,
+                            content=desc,
+                            type="material",
+                            due_date=None,
+                            created_at=mat.get('creationTime'),
+                            attachments=json.dumps(attachments),
+                            source_link=mat.get('alternateLink')
+                        )
+                        db.add(db_mat)
+                        existing_local_ids.add(item_id)
+                        logger.info(f"  + Added Material to Local DB: {title}")
                 except Exception as db_e:
                     logger.error(f"Failed to prepare material for DB: {db_e}")
                     db.rollback()
 
-                # 2. Sync to Supermemory if not already exists
-                if item_id not in existing_ids:
-                    metadata = {
-                        "user_id": self.user_email,
-                        "course_id": course_id,
-                        "course_name": course_name,
-                        "professor": professor_name,
-                        "type": "material",
-                        "source": "google_classroom",
-                        "source_id": item_id,
-                        "created_at": mat.get('creationTime'),
-                        "attachments": json.dumps(attachments),
-                        "source_link": mat.get('alternateLink')
-                    }
-                    if await self.sm_client.add_document(content, metadata, title=title, description=desc[:200]):
-                        logger.info(f"  -> Synced Material to Supermemory: {title}")
-                        existing_ids.add(item_id)
-                        UsageTracker.log_index_event(self.user_email, content=content)
+                    # PHASE 2.5: Deep Parsing
+                    attachment_text = ""
+                    if mat.get('materials'):
+                        logger.info(f"    🔍 Parsing attachments for material: {title}")
+                        attachment_text = await self._get_attachments_content(mat.get('materials'))
+                    
+                    full_content = content
+                    if attachment_text:
+                        full_content += f"\n\n--- DOCUMENT CONTENT ---\n{attachment_text}"
+
+                    # 2. Sync to Supermemory if not already exists
+                    if item_id not in existing_ids:
+                        metadata = {
+                            "user_id": self.user_email,
+                            "course_id": course_id,
+                            "course_name": course_name,
+                            "professor": professor_name,
+                            "type": "material",
+                            "source": "google_classroom",
+                            "source_id": item_id,
+                            "created_at": mat.get('creationTime'),
+                            "attachments": json.dumps(attachments),
+                            "source_link": mat.get('alternateLink')
+                        }
+                        if await self.sm_client.add_document(full_content, metadata, title=title, description=desc[:200]):
+                            logger.info(f"  -> Synced Material to Supermemory: {title}")
+                            existing_ids.add(item_id)
+                            UsageTracker.log_index_event(self.user_email, content=full_content)
             
             # Batch commit for materials
             try:
@@ -311,46 +340,62 @@ class LMSSyncService:
                     mat_text, attachments = self._format_materials(mats)
                     content += "\nAttached Resources:\n" + mat_text
 
-                # 1. Always save to local DB
+                # 1. Save to local DB (upsert: skip if exists, ensure user_id is set)
                 if item_id:
                     try:
-                        db_mat = Material(
-                            id=item_id,
-                            user_id=user_id,
-                            course_id=course_id,
-                            title=title,
-                            content=desc,
-                            type="announcement",
-                            due_date=None,
-                            created_at=ann.get('creationTime'),
-                            attachments=json.dumps(attachments),
-                            source_link=ann.get('alternateLink')
-                        )
-                        db.add(db_mat)
-                        logger.info(f"  + Added Announcement to Local DB: {text[:20]}...")
+                        if item_id in existing_local_ids:
+                            existing_mat = db.query(Material).filter(Material.id == item_id).first()
+                            if existing_mat and not existing_mat.user_id:
+                                existing_mat.user_id = user_id
+                        else:
+                            db_mat = Material(
+                                id=item_id,
+                                user_id=user_id,
+                                course_id=course_id,
+                                title=title,
+                                content=desc,
+                                type="announcement",
+                                due_date=None,
+                                created_at=ann.get('creationTime'),
+                                attachments=json.dumps(attachments),
+                                source_link=ann.get('alternateLink')
+                            )
+                            db.add(db_mat)
+                            existing_local_ids.add(item_id)
+                            logger.info(f"  + Added Announcement to Local DB: {text[:20]}...")
                     except Exception as db_e:
                         logger.error(f"Failed to prepare announcement for DB: {db_e}")
                         db.rollback()
 
-                # 2. Sync to Supermemory if not already exists
-                if item_id and item_id not in existing_ids:
-                    metadata = {
-                        "user_id": self.user_email,
-                        "course_id": course_id,
-                        "course_name": course_name,
-                        "professor": professor_name,
-                        "type": "announcement",
-                        "source": "google_classroom",
-                        "source_id": item_id,
-                        "created_at": ann.get('creationTime'),
-                        "attachments": json.dumps(attachments),
-                        "source_link": ann.get('alternateLink')
-                    }
-                     
-                    if await self.sm_client.add_document(content, metadata, title=title, description=desc[:200]):
-                        logger.info(f"  -> Synced Announcement to Supermemory: {text[:20]}...")
-                        existing_ids.add(item_id)
-                        UsageTracker.log_index_event(self.user_email, content=content)
+                    # PHASE 2.5: Deep Parsing
+                    attachment_text = ""
+                    if mats:
+                        logger.info(f"    🔍 Parsing attachments for announcement...")
+                        attachment_text = await self._get_attachments_content(mats)
+                    
+                    full_content = content
+                    if attachment_text:
+                        full_content += f"\n\n--- DOCUMENT CONTENT ---\n{attachment_text}"
+
+                    # 2. Sync to Supermemory if not already exists
+                    if item_id and item_id not in existing_ids:
+                        metadata = {
+                            "user_id": self.user_email,
+                            "course_id": course_id,
+                            "course_name": course_name,
+                            "professor": professor_name,
+                            "type": "announcement",
+                            "source": "google_classroom",
+                            "source_id": item_id,
+                            "created_at": ann.get('creationTime'),
+                            "attachments": json.dumps(attachments),
+                            "source_link": ann.get('alternateLink')
+                        }
+                         
+                        if await self.sm_client.add_document(full_content, metadata, title=title, description=desc[:200]):
+                            logger.info(f"  -> Synced Announcement to Supermemory: {text[:20]}...")
+                            existing_ids.add(item_id)
+                            UsageTracker.log_index_event(self.user_email, content=full_content)
             
             # Batch commit for announcements
             try:
@@ -377,10 +422,10 @@ class LMSSyncService:
             # Fetch a reasonable number of items. 
             # Ideally we paginate, but for now we fetch up to 100 recent items.
             results = await self.sm_client.search(query="*", filters=filters, limit=100)
-            chunks = results.get("chunks", [])
+            items = results.get("results", [])
             
-            for chunk in chunks:
-                meta = chunk.get("metadata", {})
+            for item in items:
+                meta = item.get("metadata", {})
                 sid = meta.get("source_id")
                 if sid:
                     existing_ids.add(sid)
@@ -514,4 +559,41 @@ class LMSSyncService:
         
         text = "\n".join(lines) if lines else "None"
         return text, attachments
+
+    async def _get_attachments_content(self, materials: list) -> str:
+        """Fetch and parse text from attachments if they are Drive files (PDFs, Docs, etc.)."""
+        from app.lms.drive_service import DriveSyncService
+        
+        drive_service = DriveSyncService(
+            self.gc_client.creds.token, 
+            self.user_email, 
+            self.gc_client.creds.refresh_token
+        )
+        
+        extracted_texts = []
+        for m in materials:
+            if 'driveFile' in m:
+                df = m['driveFile']
+                file_info = df.get('driveFile', {})
+                file_id = file_info.get('id')
+                if not file_id: continue
+                
+                try:
+                    # Classroom metadata doesn't always have mimeType. Fetch full meta if needed.
+                    if 'mimeType' not in file_info:
+                        service = await drive_service._get_service()
+                        from app.utils.google_lock import GoogleApiLock
+                        async with GoogleApiLock.get_lock():
+                            file_info = await asyncio.to_thread(
+                                lambda: service.files().get(fileId=file_id, fields="id, name, mimeType").execute()
+                            )
+                    
+                    # Reuse DriveSyncService's complex extraction logic
+                    content = await drive_service._get_file_content(file_info)
+                    if content and len(content.strip()) > 50:
+                        extracted_texts.append(f"--- Document Attachment: {file_info.get('name', 'Untitled')} ---\n{content}\n")
+                except Exception as e:
+                    logger.warning(f"Failed to parse classroom attachment {file_id}: {e}")
+        
+        return "\n".join(extracted_texts) if extracted_texts else ""
 

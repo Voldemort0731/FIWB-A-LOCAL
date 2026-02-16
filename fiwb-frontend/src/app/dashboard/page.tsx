@@ -118,8 +118,12 @@ export default function Dashboard() {
                 const materials = await res.json();
 
                 materials.forEach((m: any) => {
+                    // Deduplicate results (e.g. if already found locally)
+                    if (results.some(r => r.id === m.id)) return;
+
                     results.push({
                         type: 'document',
+                        id: m.id,
                         title: m.title,
                         subtitle: `${m.type} • ${m.source}`,
                         icon: m.source === "Supermemory Memory" ? Sparkles : FileText,
@@ -138,7 +142,7 @@ export default function Dashboard() {
                     });
                 }
 
-                setSearchResults(results);
+                setSearchResults([...results]); // Force re-render
             } catch (err) {
                 console.error("Material search failed:", err);
                 if (results.length === 0) {
@@ -214,7 +218,7 @@ export default function Dashboard() {
                                     </div>
                                     <h2 className="text-2xl font-black tracking-tight">AI Spotlight Search</h2>
                                 </div>
-                                <p className="text-gray-500 font-medium">Search knowledge, commands, settings, or ask AI</p>
+                                <p className="text-gray-500 font-medium">Search Drive, Classroom, or ask AI</p>
                             </div>
 
                             <div className="relative w-full group">
@@ -232,9 +236,18 @@ export default function Dashboard() {
                                             setSearchQuery("");
                                         }
                                     }}
-                                    placeholder="Search anything"
-                                    className="w-full h-16 bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/10 rounded-[1.25rem] px-8 font-medium focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all text-lg"
+                                    placeholder="Search Drive, Gmail, Classroom..."
+                                    className="w-full h-16 bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/10 rounded-[1.25rem] pl-8 pr-36 font-medium focus:outline-none focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500/50 transition-all text-lg"
                                 />
+
+                                <button
+                                    onClick={() => searchQuery.trim() && router.push(`/chat?q=${encodeURIComponent(searchQuery)}`)}
+                                    disabled={!searchQuery.trim()}
+                                    className="absolute right-2 top-2 bottom-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-200 dark:disabled:bg-white/5 disabled:text-gray-400 disabled:cursor-not-allowed text-white rounded-[1rem] px-5 font-bold text-sm flex items-center gap-2 transition-all shadow-lg shadow-blue-600/20 hover:scale-105 active:scale-95 z-10"
+                                >
+                                    <Sparkles size={16} />
+                                    Ask AI
+                                </button>
 
                                 {/* Search Results Dropdown */}
                                 <AnimatePresence>
