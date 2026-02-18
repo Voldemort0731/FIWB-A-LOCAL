@@ -21,9 +21,12 @@ class RetrievalOrchestrator:
             
         history_str = "\n".join([f"{m['role']}: {m['content'][:300]}" for m in history[-5:]])
         
-        prompt = f"""Given the following conversation history and a follow-up question, rewrite the question to be a standalone search query that captures the full context. 
-If the question is already descriptive, return it as is.
-Focus on extracting the subject of the conversation.
+        prompt = f"""Review the conversation history and the follow-up question below. 
+Rewrite the question into a highly descriptive, standalone search query. 
+Rules:
+1. Preserve specific keywords, product names, or proper nouns.
+2. Include the subject mentioned in history (e.g., if we're talking about 'Calculus', include 'Calculus' in the query).
+3. If the question is a greeting or meta-question, return the original.
 
 **HISTORY:**
 {history_str}
@@ -31,7 +34,7 @@ Focus on extracting the subject of the conversation.
 **FOLLOW-UP QUESTION:**
 {query}
 
-**STANDALONE QUERY:**"""
+**STANDALONE SEARCH QUERY:**"""
 
         try:
             # Log input tokens
@@ -111,11 +114,17 @@ Focus on extracting the subject of the conversation.
             if not res or not isinstance(res, dict): return []
             all_chunks = []
             for doc in res.get('results', []):
+                doc_id = doc.get('documentId')
                 meta = doc.get('metadata', {})
                 for chunk in doc.get('chunks', []):
+                    # Combine doc metadata, chunk metadata, and doc_id
+                    chunk_meta = {**meta, **chunk.get('metadata', {})}
+                    if doc_id:
+                        chunk_meta['documentId'] = doc_id
+                    
                     all_chunks.append({
                         "content": chunk.get('content', ''),
-                        "metadata": {**meta, **chunk.get('metadata', {})}
+                        "metadata": chunk_meta
                     })
             return all_chunks
 

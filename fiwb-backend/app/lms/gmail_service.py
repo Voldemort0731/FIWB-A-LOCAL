@@ -161,7 +161,8 @@ class GmailSyncService:
                                 "type": "assistant_knowledge",
                                 "source": "gmail",
                                 "category": analysis.get('label'),
-                                "date": email_date
+                                "date": email_date,
+                                "source_link": f"https://mail.google.com/mail/u/0/#inbox/{msg_id}"
                             }
                         )
                 except Exception as e:

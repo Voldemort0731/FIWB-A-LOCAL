@@ -20,28 +20,61 @@ class PromptArchitect:
         Builds a high-fidelity, multi-message conversation for the Socratic Institutional Mentor.
         """
         
-        # 1. ORCHESTRATE ACADEMIC CONTEXT
+        # 1. ORCHESTRATE ACADEMIC CONTEXT (Grouped by Document)
         context_blocks = []
+        docs = {}
         for c in retrieved_chunks:
             meta = c.get('metadata', {})
-            course = meta.get('course_name', 'University Workspace')
-            category = meta.get('type', 'Institutional Material').upper()
-            author = meta.get('professor', 'Academic Faculty')
-            title = meta.get('title') or meta.get('file_name') or "Institutional Document"
-            content = c.get('content', '')
-            context_blocks.append(f"[{category} | {course}]\nDOCUMENT: {title}\nFACULTY: {author}\nCONTENT: {content}")
+            # Use documentId or fallback to title+course for uniqueness
+            doc_key = meta.get('documentId') or f"{meta.get('title')}-{meta.get('course_id')}"
+            
+            if doc_key not in docs:
+                course_name = meta.get('course_name') or meta.get('course_id') or "General Workspace"
+                base_title = meta.get('title') or meta.get('file_name') or "Institutional Document"
+                
+                docs[doc_key] = {
+                    "title": f"{base_title} [{course_name}]",
+                    "course": course_name,
+                    "category": meta.get('type', 'Institutional Material').upper(),
+                    "author": meta.get('professor', 'Academic Faculty'),
+                    "link": meta.get('source_link') or meta.get('url'),
+                    "chunks": []
+                }
+            docs[doc_key]["chunks"].append(c.get('content', ''))
+        
+        for d_info in docs.values():
+            content = "\n\n".join(d_info["chunks"])
+            block = f"[{d_info['category']} | {d_info['course']}]\n"
+            block += f"DOCUMENT: {d_info['title']}\n"
+            block += f"FACULTY: {d_info['author']}\n"
+            if d_info['link']: block += f"LINK: {d_info['link']}\n"
+            block += f"CONTENT: {content}"
+            context_blocks.append(block)
         
         knowledge_base = "\n\n---\n\n".join(context_blocks) if context_blocks else "General academic intelligence."
 
         # 2. ORCHESTRATE ASSISTANT KNOWLEDGE (GMAIL/WORKSPACE/ASSETS)
         assistant_blocks = []
         if assistant_knowledge:
+            # Group assistant knowledge too
+            ak_docs = {}
             for ak in assistant_knowledge:
                 meta = ak.get('metadata', {})
-                label = meta.get('category', 'INTEL').upper()
-                sender = meta.get('sender', 'Neural Link')
-                title = meta.get('subject') or meta.get('title') or "Workspace Item"
-                assistant_blocks.append(f"[{label} | SENDER: {sender} | TITLE: {title}]\nCONTEXT: {ak.get('content')}")
+                ak_key = meta.get('documentId') or meta.get('subject') or meta.get('id')
+                if ak_key not in ak_docs:
+                    label = meta.get('category', 'INTEL').upper()
+                    sender = meta.get('sender', 'Neural Link')
+                    subject = meta.get('subject') or meta.get('title') or "Workspace Item"
+                    ak_docs[ak_key] = {
+                        "title": f"Email: {subject}",
+                        "header": f"[{label} | SENDER: {sender} | TITLE: {subject}]",
+                        "chunks": []
+                    }
+                ak_docs[ak_key]["chunks"].append(ak.get('content', ''))
+            
+            for ak_info in ak_docs.values():
+                ak_content = "\n".join(ak_info["chunks"])
+                assistant_blocks.append(f"{ak_info['header']}\nCONTEXT: {ak_content}")
         
         if chat_assets:
             for asset in chat_assets:
@@ -52,10 +85,10 @@ class PromptArchitect:
         assistant_workspace = "\n\n".join(assistant_blocks) if assistant_blocks else "No proprietary workspace context detected."
 
         # 3. ORCHESTRATE LONG-TERM COGNITION
-        memory_vault = "\n".join([f"• {m['content']}" for m in memories]) if memories else "No prior history detected."
+        memory_vault = "\n".join([f"• {m['content']}" for m in memories]) if memories else "Establish prior student context."
         
         # 4. ORCHESTRATE USER IDENTITY
-        identity_logic = "\n".join([f"• {p['content']}" for p in profile]) if profile else "Establish student learning style."
+        identity_logic = "\n".join([f"• {p['content']}" for p in profile]) if profile else "Analyze learning behavior."
 
         # 5. DEFINE CORE INSTRUCTION
         if query_type == "general_chat":
@@ -64,47 +97,48 @@ class PromptArchitect:
 You are the student's supportive, witty, and deeply empathetic Digital Twin. 
 You act as a personal assistant and friend, using a warm and relatable tone.
 
-# PROPRIETARY WORKSPACE:
+# PROPRIETARY WORKSPACE (Institutional Intel):
 {assistant_workspace}
 
 # ACADEMIC / DRIVE CONTEXT:
 {knowledge_base}
 
-# COGNITIVE CONTEXT:
+# COGNITIVE CONTEXT (Your Memory of User):
 - Learned Identity: {identity_logic}
 - Past Insights: {memory_vault}
 
 # DIRECTIVE:
-1. Use double-spacing between modules for "Oxygen."
-2. **Bold** critical insights.
-3. Be empathetic and supportive. Reference their tasks or events from the workspace if relevant.
+1. Be empathetic and supportive. Reference their tasks or events from the workspace if relevant.
+2. Use **bold** for important dates or tasks.
+3. If referencing institutional items, use their full titles: Title [Course].
 """
         else:
             SYSTEM_PROMPT = f"""
 # IDENTITY: FIWB Institutional Intelligence (FIWB-II)
-You are an elite academic mentor and Socratic tutor.
+You are an elite academic mentor and Socratic tutor. 
 
-# ACADEMIC VAULT:
+# ACADEMIC VAULT (Verified Chunks):
 {knowledge_base}
 
-# ASSISTANT WORKSPACE (Life/Context):
+# ASSISTANT WORKSPACE (Life/Context/Emails):
 {assistant_workspace}
 
 # PERSONALIZED INTELLIGENCE (Digital Twin Profile):
-- Learned Identity & Preferences: {identity_logic}
-- Past Memories & Patterns: {memory_vault}
+- Student Profile & Preferences: {identity_logic}
+- Behavioral Patterns & Past Memories: {memory_vault}
 
 # DIRECTIVE:
-1. PRIORITIZE the Academic Vault. Quote materials directly.
-2. SOCRATIC METHOD: Guide the student. Explain, then probe with clarifying questions.
-3. PERSONALIZED MENTORING: Use the 'Personalized Intelligence' above to adapt your tone and examples to the student's learning style.
-4. TAGGING (START): You MUST start your response with exactly: [PERSONAL_REASONING: insight1, insight2]. Example: [PERSONAL_REASONING: Visual Preference, Prior Knowledge].
-5. TAGGING (END): You MUST conclude your response with exactly: [DOCUMENTS_REFERENCED: doc1, doc2]. List the exact titles of materials used from the Academic Vault.
-6. CONTINUITY: If you use the Assistant Workspace (Gmail/Chat), include those in the [DOCUMENTS_REFERENCED: ...] list as 'Email: Subject' or 'Asset: Name'.
+1. **Grounded Reasoning**: PRIORITIZE the Academic Vault. Quote materials directly (use "quotation marks").
+2. **Fidelity**: When referring to a document, use the code: DOCUMENT: [Full Title]. 
+3. **Socratic Support**: Guide the student. Explain complex concepts, then probe with clarifying questions.
+4. **Linkages**: If a DIRECT LINK is provided in the Vault, you may mention it to help the student find the full resource.
+5. **TAGGING (START)**: You MUST start your response with exactly: [PERSONAL_REASONING: key_insights].
+6. **TAGGING (END)**: You MUST conclude your response with exactly: [DOCUMENTS_REFERENCED: Full Title 1, Full Title 2]. Use the EXACT titles provided in the DOCUMENT: ... field.
 
 # VISUAL EXCELLENCE:
 - Use # H1 and ## H2 for hierarchy.
-- Bold **core terminology**.
+- Use bullet points for readability.
+- **Bold** core academic terminology.
 """
         messages = [{"role": "system", "content": SYSTEM_PROMPT.strip()}]
 

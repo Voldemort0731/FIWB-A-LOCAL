@@ -283,19 +283,29 @@ async def chat_stream(
             for cat, prefix in categories.items():
                 for item in c_data.get(cat, []):
                     meta = item.get("metadata", {})
-                    title = meta.get("title") or meta.get("file_name") or meta.get("course_name")
+                    
+                    # Match unique title logic from PromptArchitect
+                    course_name = meta.get('course_name') or meta.get('course_id') or "General Workspace"
+                    base_title = meta.get('title') or meta.get('file_name') or "Institutional Document"
+                    unique_title = f"{base_title} [{course_name}]"
+                    
+                    if cat == "assistant_knowledge":
+                        unique_title = f"Email: {meta.get('subject') or meta.get('title') or 'Workspace Item'}"
+                    elif cat == "chat_assets":
+                        unique_title = f"Asset: {meta.get('file_name', 'Previous Asset')}"
+
                     link = meta.get("source_link") or meta.get("url")
                     
-                    if title and title not in seen_titles:
-                        seen_titles.add(title)
+                    if unique_title and unique_title not in seen_titles:
+                        seen_titles.add(unique_title)
                         sources_metadata.append({
-                            "title": title,
-                            "display": f"{prefix}{title}",
+                            "title": unique_title,
+                            "display": f"{prefix}{unique_title}",
                             "link": link
                         })
             
             if sources_metadata:
-                yield f"data: EVENT:SOURCES:{json.dumps(sources_metadata[:8])}\n\n"
+                yield f"data: EVENT:SOURCES:{json.dumps(sources_metadata[:15])}\n\n"
                 yield f"data: EVENT:THINKING:Synthesizing personalized response...\n\n"
                 await asyncio.sleep(0.5)
             else:
