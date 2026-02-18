@@ -15,6 +15,8 @@ from app.utils.email import standardize_email
 
 logger = logging.getLogger("uvicorn.error")
 
+from app.utils.locks import GLOBAL_API_LOCK
+
 class GmailSyncService:
 
     def __init__(self, access_token: str, user_email: str, refresh_token: str = None):
@@ -37,9 +39,11 @@ class GmailSyncService:
         if self.service is None:
             logger.info(f"Initializing Gmail Service for {self.user_email}...")
             try:
-                self.service = await asyncio.to_thread(
-                    lambda: build('gmail', 'v1', credentials=self.creds, static_discovery=True)
-                )
+                # Serialize service creation
+                async with GLOBAL_API_LOCK:
+                    self.service = await asyncio.to_thread(
+                        lambda: build('gmail', 'v1', credentials=self.creds, static_discovery=True)
+                    )
             except Exception as e:
                 logger.error(f"Failed to initialize Gmail service for {self.user_email}: {e}")
                 raise e
@@ -74,9 +78,11 @@ class GmailSyncService:
 
         try:
             service = await self._get_service()
-            results = await asyncio.to_thread(
-                lambda: service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
-            )
+            # Serialize the LIST call
+            async with GLOBAL_API_LOCK:
+                results = await asyncio.to_thread(
+                    lambda: service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
+                )
         except Exception as e:
             logger.error(f"Gmail list failed: {e}")
             db.close()
@@ -111,9 +117,12 @@ class GmailSyncService:
                 try:
                     # Fetch full content
                     service = await self._get_service()
-                    message = await asyncio.to_thread(
-                        lambda: service.users().messages().get(userId='me', id=msg_id).execute()
-                    )
+                    
+                    # Serialize the GET call
+                    async with GLOBAL_API_LOCK:
+                        message = await asyncio.to_thread(
+                            lambda: service.users().messages().get(userId='me', id=msg_id).execute()
+                        )
                     
                     payload = message.get('payload', {})
                     headers = payload.get('headers', [])
@@ -174,14 +183,16 @@ class GmailSyncService:
                 finally:
                     task_db.close()
 
-        # Process new messages in batches with a semaphore to prevent pool exhaustion
-        semaphore = asyncio.Semaphore(3)
+        # Process new messages in batches
+        # Although we have semaphore, GLOBAL LOCK will force true sequential execution for API calls.
+        # This is slower but guaranteed safe.
+        semaphore = asyncio.Semaphore(1) # Reduced to 1 to minimize overhead of lock contention
         
         async def process_with_semaphore(msg):
             async with semaphore:
                 await process_message(msg)
 
-        batch_size = 10 # Process more at once but limited by semaphore
+        batch_size = 5 
         for i in range(0, len(new_messages), batch_size):
             batch = new_messages[i:i + batch_size]
             await asyncio.gather(*(process_with_semaphore(m) for m in batch))

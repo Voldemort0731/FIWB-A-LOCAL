@@ -8,10 +8,7 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
-# Global lock for the entire process.
-# httplib2/ssl in Python 3.12+ segfaults if multiple threads touch SSL sockets simultaneously,
-# even across different service objects. We must serialize ALL Google API calls globally.
-GLOBAL_API_LOCK = asyncio.Lock()
+from app.utils.locks import GLOBAL_API_LOCK
 
 class GoogleClassroomClient:
     def __init__(self, token: str, refresh_token: str = None):
