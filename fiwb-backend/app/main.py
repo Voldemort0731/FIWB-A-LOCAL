@@ -11,7 +11,13 @@ Base.metadata.create_all(bind=engine)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://app.fiwbai.xyz",
+        "https://app.fiwb.xyz",
+        "https://fiwbai.xyz",
+        "https://fiwb.xyz",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
