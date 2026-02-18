@@ -1,19 +1,16 @@
 import os
 import asyncio
-import httpx
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from app.lms.sync_service import LMSSyncService
-from app.database import get_db, engine, Base
+from app.database import get_db
 from app.models import User
 from app.config import settings
 from app.utils.email import standardize_email
 
-# Allow scope mismatch (Google sometimes reorders or drops scopes)
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 
 router = APIRouter()
@@ -24,17 +21,14 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """
-    Highly optimized Login endpoint for Institutional Scale.
-    Uses shared connection pooling and non-blocking background tasks.
-    """
+    """Login endpoint: exchange Google code for tokens, upsert user, trigger background sync."""
     try:
         from app.utils.clients import SharedClients
-        client = SharedClients.get_http_client()
-        
-        # 1. Exchange Authorization Code for Tokens
-        logger.info(f"Attempting token exchange for code: {request.code[:10]}...")
-        token_resp = await client.post(
+        http = SharedClients.get_http_client()
+
+        # 1. Exchange auth code for tokens
+        logger.info(f"Token exchange starting...")
+        token_resp = await http.post(
             "https://oauth2.googleapis.com/token",
             data={
                 "code": request.code,
@@ -45,93 +39,93 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
             },
             timeout=15.0
         )
-        
         if not token_resp.is_success:
             logger.error(f"Token exchange failed: {token_resp.text}")
             raise HTTPException(status_code=400, detail="Google authentication failed")
-        
+
         tokens = token_resp.json()
         access_token = tokens.get('access_token')
         refresh_token = tokens.get('refresh_token')
-        
-        # 2. Get User Profile via direct UserInfo API
-        ui_resp = await client.get(
+        logger.info(f"Token exchange OK. Has refresh_token: {bool(refresh_token)}")
+
+        # 2. Get user profile
+        ui_resp = await http.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=10.0
         )
-        
         if not ui_resp.is_success:
-            logger.error(f"UserInfo fetch failed: {ui_resp.text}")
-            raise HTTPException(status_code=400, detail="Failed to retrieve profile info")
-        
+            raise HTTPException(status_code=400, detail="Failed to retrieve Google profile")
+
         user_info = ui_resp.json()
-        email = standardize_email(user_info.get('email'))
-        google_id = str(user_info.get('id') or user_info.get('sub'))
-        
+        email = standardize_email(user_info.get('email', ''))
+        google_id = str(user_info.get('id') or user_info.get('sub', ''))
+
         if not email:
-            raise HTTPException(status_code=400, detail="No email found in Google response")
+            raise HTTPException(status_code=400, detail="No email in Google response")
 
-        # 3. Database Management (Non-blocking)
-        def get_or_create_user(db_session: Session, g_id: str, u_email: str, a_token: str, r_token: str):
-            user = db_session.query(User).filter(User.google_id == g_id).first()
-            if not user:
-                user = db_session.query(User).filter(User.email == u_email).first()
+        logger.info(f"Login: {email}")
 
-        # 3. Database Management (Synchronous for Safety)
-        # We run this directly to avoid threading issues with the dependency-injected session
-        def get_or_create_user_sync(db_session: Session, g_id: str, u_email: str, a_token: str, r_token: str):
-            user = db_session.query(User).filter(User.google_id == g_id).first()
-            if not user:
-                user = db_session.query(User).filter(User.email == u_email).first()
+        # 3. Upsert user in DB (synchronous — safe with injected session)
+        user = db.query(User).filter(User.google_id == google_id).first()
+        if not user:
+            user = db.query(User).filter(User.email == email).first()
 
-            if not user:
-                user = User(email=u_email, google_id=g_id, access_token=a_token, refresh_token=r_token)
-                db_session.add(user)
-            else:
-                user.email = u_email 
-                user.google_id = g_id
-                user.access_token = a_token
-                user.refresh_token = r_token if r_token else user.refresh_token
-            
-            user.last_synced = datetime.utcnow()
-            try:
-                db_session.commit()
-                db_session.refresh(user)
-                return user.id
-            except Exception as e:
-                db_session.rollback()
-                raise e
+        if not user:
+            logger.info(f"Creating new user: {email}")
+            user = User(
+                email=email,
+                google_id=google_id,
+                access_token=access_token,
+                refresh_token=refresh_token
+            )
+            db.add(user)
+        else:
+            logger.info(f"Updating existing user: {email}")
+            user.email = email
+            user.google_id = google_id
+            user.access_token = access_token
+            # Only overwrite refresh_token if we got a new one (Google only sends it on first auth)
+            if refresh_token:
+                user.refresh_token = refresh_token
 
-        user_id = get_or_create_user_sync(db, google_id, email, access_token, refresh_token)
-        logger.info(f"User {email} authenticated. Starting background sync.")
-        
-        # 4. Defer Background Tasks (Leveled Sync)
+        user.last_synced = datetime.utcnow()
+        db.commit()
+        db.refresh(user)
+        user_id = user.id
+        logger.info(f"User {email} saved to DB (id={user_id}). Queuing background sync.")
+
+        # 4. Background sync — uses the tokens we just got (fresh and valid)
         async def run_initial_sync():
             try:
-                # Level 0/1: Classroom meta
+                logger.info(f"[BG Sync] Starting classroom sync for {email}")
                 from app.lms.sync_service import LMSSyncService
-                service = LMSSyncService(access_token, email, refresh_token)
-                await service.sync_all_courses()
-                
-                # Level 2: Deep Sync (Gmail, Drive) - delayed for UI smoothness
-                await asyncio.sleep(3) 
-                from app.intelligence.scheduler import sync_all_for_user
-                await sync_all_for_user(email)
+                svc = LMSSyncService(access_token, email, refresh_token)
+                await svc.sync_all_courses()
+                logger.info(f"[BG Sync] Classroom done for {email}")
+
+                # Gmail after a short delay
+                await asyncio.sleep(5)
+                logger.info(f"[BG Sync] Starting Gmail sync for {email}")
+                from app.lms.gmail_service import GmailSyncService
+                gmail = GmailSyncService(access_token, email, refresh_token)
+                await gmail.sync_recent_emails()
+                logger.info(f"[BG Sync] Gmail done for {email}")
             except Exception as e:
-                logger.error(f"Background sync failed for {email}: {e}")
+                logger.error(f"[BG Sync] Failed for {email}: {e}", exc_info=True)
 
         background_tasks.add_task(run_initial_sync)
-        
+
         return {
-            "status": "success", 
+            "status": "success",
             "user_id": user_id,
             "email": email,
             "name": user_info.get('name'),
             "picture": user_info.get('picture')
         }
-    
-    except HTTPException: raise
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Login failure: {e}")
-        raise HTTPException(status_code=500, detail="Institutional link failure during login.")
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
