@@ -31,11 +31,18 @@ else:
 
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
-        pool_size=5,
-        max_overflow=2,
-        pool_timeout=30,
-        pool_recycle=1800,
-        pool_pre_ping=True
+        pool_size=3,
+        max_overflow=5,
+        pool_timeout=60,        # Wait up to 60s for a connection
+        pool_recycle=300,       # Recycle connections every 5 min (Railway drops idle ones)
+        pool_pre_ping=True,     # Test connection before using it (handles dropped connections)
+        connect_args={
+            "connect_timeout": 30,          # 30s to establish connection
+            "keepalives": 1,                # Enable TCP keepalives
+            "keepalives_idle": 30,          # Send keepalive after 30s idle
+            "keepalives_interval": 10,      # Retry keepalive every 10s
+            "keepalives_count": 5,          # Give up after 5 failed keepalives
+        }
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
