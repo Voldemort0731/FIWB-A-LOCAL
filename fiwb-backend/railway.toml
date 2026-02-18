@@ -2,10 +2,12 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
+# Single worker to prevent SQLite locking AND httplib2 thread-safety crashes.
+# If you add PostgreSQL, you can increase to --workers 2
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
 healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
 
 [build.env]
-PYTHON_VERSION = "3.10"
+PYTHON_VERSION = "3.12"

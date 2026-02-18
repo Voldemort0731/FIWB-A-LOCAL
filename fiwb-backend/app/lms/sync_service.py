@@ -114,21 +114,17 @@ class LMSSyncService:
                         cid = course_data['id']
                         cname = course_data['name']
 
-                        # Get professor name (best effort, short timeout)
+                        # Get professor name (best effort, 403 is silently ignored)
                         professor = "Unknown Professor"
                         try:
-                            service = await self.gc_client._get_service()
-                            tr = await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    lambda: service.courses().teachers().list(courseId=cid).execute()
-                                ),
+                            teachers = await asyncio.wait_for(
+                                self.gc_client.get_teachers(cid),
                                 timeout=5.0
                             )
-                            teachers = tr.get('teachers', [])
                             if teachers:
                                 professor = teachers[0].get('profile', {}).get('name', {}).get('fullName', 'Unknown')
                             db_c = task_db.query(Course).filter(Course.id == cid).first()
-                            if db_c:
+                            if db_c and professor != "Unknown Professor":
                                 db_c.professor = professor
                                 task_db.commit()
                         except Exception:
@@ -157,17 +153,26 @@ class LMSSyncService:
                 row[0] for row in db.query(Material.id).filter(Material.course_id == course_id).all()
             )
 
-            # Fetch all content types in parallel with individual error handling
-            results = await asyncio.gather(
-                self.gc_client.get_coursework(course_id),
-                self.gc_client.get_materials(course_id),
-                self.gc_client.get_announcements(course_id),
-                return_exceptions=True
-            )
+            # Fetch content types SEQUENTIALLY — httplib2 is not thread-safe.
+            # asyncio.gather with to_thread on the same service object = segfault.
+            coursework = []
+            materials_list = []
+            announcements = []
 
-            coursework = results[0] if not isinstance(results[0], Exception) else []
-            materials_list = results[1] if not isinstance(results[1], Exception) else []
-            announcements = results[2] if not isinstance(results[2], Exception) else []
+            try:
+                coursework = await self.gc_client.get_coursework(course_id)
+            except Exception as e:
+                logger.warning(f"[Sync] Coursework fetch failed for {course_id}: {e}")
+
+            try:
+                materials_list = await self.gc_client.get_materials(course_id)
+            except Exception as e:
+                logger.warning(f"[Sync] Materials fetch failed for {course_id}: {e}")
+
+            try:
+                announcements = await self.gc_client.get_announcements(course_id)
+            except Exception as e:
+                logger.warning(f"[Sync] Announcements fetch failed for {course_id}: {e}")
 
             new_materials = []
 

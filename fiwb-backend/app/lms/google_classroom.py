@@ -3,9 +3,15 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from app.config import settings
 import asyncio
+import threading
 import logging
 
 logger = logging.getLogger("uvicorn.error")
+
+# Per-instance lock to prevent concurrent httplib2 calls on the same service object.
+# httplib2 is NOT thread-safe — two simultaneous asyncio.to_thread calls on the
+# same service object cause a segfault. This lock serializes them per-user.
+_instance_lock = threading.Lock()
 
 class GoogleClassroomClient:
     def __init__(self, token: str, refresh_token: str = None):
@@ -16,18 +22,27 @@ class GoogleClassroomClient:
             client_id=settings.GOOGLE_CLIENT_ID,
             client_secret=settings.GOOGLE_CLIENT_SECRET
         )
-        self.user_email = "me"
         self._service = None
+        # Each instance gets its own asyncio lock to serialize its own API calls
+        self._lock = asyncio.Lock()
 
     async def _get_service(self):
-        """Build the Classroom service. No global lock — each user gets their own instance."""
-        if self._service is None:
-            # Refresh token in a thread if needed
+        """Build the Classroom service (lazy, once per instance)."""
+        if self._service is not None:
+            return self._service
+
+        async with self._lock:
+            # Double-check after acquiring lock
+            if self._service is not None:
+                return self._service
+
+            # Refresh token if needed (synchronous, safe in thread)
             if self.creds.refresh_token and (self.creds.expired or not self.creds.valid):
                 try:
                     await asyncio.to_thread(self.creds.refresh, Request())
+                    logger.info("Token refreshed successfully")
                 except Exception as e:
-                    logger.error(f"Token refresh failed: {e}")
+                    logger.warning(f"Token refresh failed (will try with existing): {e}")
 
             try:
                 self._service = await asyncio.to_thread(
@@ -35,35 +50,44 @@ class GoogleClassroomClient:
                 )
             except Exception as e:
                 logger.error(f"Failed to build Classroom service: {e}")
-                raise e
+                raise
         return self._service
 
+    async def _execute(self, request_fn):
+        """
+        Execute a Google API request safely.
+        Serializes calls through the instance lock to prevent httplib2 thread-safety crashes.
+        """
+        async with self._lock:
+            return await asyncio.to_thread(request_fn)
+
     async def get_courses(self):
-        """Fetch all courses the user is enrolled in or teaching."""
+        """Fetch all active courses. Sequential (not parallel) to avoid httplib2 segfault."""
         service = await self._get_service()
 
-        async def fetch_student():
-            try:
-                r = await asyncio.to_thread(
-                    lambda: service.courses().list(studentId='me', courseStates=['ACTIVE']).execute()
-                )
-                return r.get('courses', [])
-            except Exception as e:
-                logger.warning(f"Student courses fetch failed: {e}")
-                return []
+        # IMPORTANT: Do NOT use asyncio.gather here.
+        # Running two asyncio.to_thread calls on the same httplib2-backed service
+        # object simultaneously causes a segmentation fault in Python 3.12.
+        student_courses = []
+        teacher_courses = []
 
-        async def fetch_teacher():
-            try:
-                r = await asyncio.to_thread(
-                    lambda: service.courses().list(teacherId='me', courseStates=['ACTIVE']).execute()
-                )
-                return r.get('courses', [])
-            except Exception as e:
-                logger.warning(f"Teacher courses fetch failed: {e}")
-                return []
+        try:
+            result = await self._execute(
+                lambda: service.courses().list(studentId='me', courseStates=['ACTIVE']).execute()
+            )
+            student_courses = result.get('courses', [])
+        except Exception as e:
+            logger.warning(f"Student courses fetch failed: {e}")
 
-        res_student, res_teacher = await asyncio.gather(fetch_student(), fetch_teacher())
-        all_courses = res_student + res_teacher
+        try:
+            result = await self._execute(
+                lambda: service.courses().list(teacherId='me', courseStates=['ACTIVE']).execute()
+            )
+            teacher_courses = result.get('courses', [])
+        except Exception as e:
+            logger.warning(f"Teacher courses fetch failed: {e}")
+
+        all_courses = student_courses + teacher_courses
         unique = {c['id']: c for c in all_courses}
         return list(unique.values())
 
@@ -71,7 +95,7 @@ class GoogleClassroomClient:
         """Fetch assignments for a course."""
         service = await self._get_service()
         try:
-            r = await asyncio.to_thread(
+            r = await self._execute(
                 lambda: service.courses().courseWork().list(courseId=course_id).execute()
             )
             return r.get('courseWork', [])
@@ -83,7 +107,7 @@ class GoogleClassroomClient:
         """Fetch announcements for a course."""
         service = await self._get_service()
         try:
-            r = await asyncio.to_thread(
+            r = await self._execute(
                 lambda: service.courses().announcements().list(courseId=course_id).execute()
             )
             return r.get('announcements', [])
@@ -95,10 +119,23 @@ class GoogleClassroomClient:
         """Fetch course materials."""
         service = await self._get_service()
         try:
-            r = await asyncio.to_thread(
+            r = await self._execute(
                 lambda: service.courses().courseWorkMaterials().list(courseId=course_id).execute()
             )
             return r.get('courseWorkMaterial', [])
         except Exception as e:
             logger.warning(f"Materials fetch failed for {course_id}: {e}")
+            return []
+
+    async def get_teachers(self, course_id: str):
+        """Fetch teachers for a course. Returns empty list on 403 (no permission)."""
+        service = await self._get_service()
+        try:
+            r = await self._execute(
+                lambda: service.courses().teachers().list(courseId=course_id).execute()
+            )
+            return r.get('teachers', [])
+        except Exception as e:
+            # 403 is common — students can't list teachers in all courses
+            logger.debug(f"Teachers fetch skipped for {course_id}: {e}")
             return []
