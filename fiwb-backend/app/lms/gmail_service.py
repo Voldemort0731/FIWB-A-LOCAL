@@ -191,6 +191,24 @@ class GmailSyncService:
         if user:
             user.last_synced = datetime.datetime.utcnow()
             db.commit()
+
+        # Restore Pruning logic (Keep only top 25)
+        try:
+            from sqlalchemy import or_
+            all_emails = db.query(Material).filter(
+                Material.course_id == "GMAIL_INBOX",
+                or_(Material.user_id == user.id, Material.user_id == None)
+            ).order_by(Material.created_at.desc()).all()
+            
+            if len(all_emails) > 25:
+                logger.info(f"Pruning emails for {self.user_email}. Current count: {len(all_emails)}")
+                for old_email in all_emails[25:]:
+                    # Purge from DB
+                    db.delete(old_email)
+                db.commit()
+                logger.info(f"Pruning complete. 25 most recent emails kept.")
+        except Exception as e:
+            logger.error(f"Gmail pruning failed: {e}")
             
         db.close()
         return stats["synced_count"]

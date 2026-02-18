@@ -103,10 +103,10 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
             # 3. Database Management (Fast Lookup)
             logger.info(f"Database lookup for user: {email}")
             
-            def get_or_create_user(db: Session, google_id: str, email: str, access_token: str, refresh_token: str):
-                user = db.query(User).filter(User.google_id == google_id).first()
+            def get_or_create_user(db_session: Session, google_id: str, email: str, access_token: str, refresh_token: str):
+                user = db_session.query(User).filter(User.google_id == google_id).first()
                 if not user:
-                    user = db.query(User).filter(User.email == email).first()
+                    user = db_session.query(User).filter(User.email == email).first()
 
                 if not user:
                     logger.info(f"Creating new user: {email}")
@@ -116,7 +116,7 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
                         access_token=access_token,
                         refresh_token=refresh_token
                     )
-                    db.add(user)
+                    db_session.add(user)
                 else:
                     logger.info(f"Updating existing user: {email}")
                     user.email = email 
@@ -125,45 +125,47 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
                     if refresh_token:
                         user.refresh_token = refresh_token
                 
+                # Update user last_synced
+                user.last_synced = datetime.utcnow()
+                
                 try:
-                    db.commit()
-                    db.refresh(user)
-                    return user
+                    db_session.commit()
+                    db_session.refresh(user)
+                    return user.id, user.email, user.access_token, user.refresh_token
                 except Exception as e:
-                    db.rollback()
+                    db_session.rollback()
                     raise e
 
             # Offload synchronous DB work to avoid blocking the event loop
-            user = await asyncio.to_thread(get_or_create_user, db, google_id, email, access_token, refresh_token)
-            logger.info(f"User {email} committed to DB")
+            # Crucial: We only return the IDs/Tokens to prevent keeping the User object (and session) active too long
+            u_id, u_email, u_at, u_rt = await asyncio.to_thread(get_or_create_user, db, google_id, email, access_token, refresh_token)
+            logger.info(f"User {email} committed to DB. Releasing main session link.")
             
             # 4. Defer Background Tasks — FAST FIRST, DEEP LATER
             async def run_initial_sync():
                 try:
-                    logger.info(f"Starting background sync task for {email}")
+                    logger.info(f"Starting background sync task for {u_email}")
                     # Phase 1: Quick classroom metadata (courses list only)
-                    service = LMSSyncService(access_token, email, refresh_token)
+                    service = LMSSyncService(u_at, u_email, u_rt)
                     await service.sync_all_courses()
-                    logger.info(f"Phase 1 (classroom meta) done for {email}")
                 except Exception as e:
-                    logger.error(f"Phase 1 sync fail for {email}: {e}")
+                    logger.error(f"Phase 1 sync fail for {u_email}: {e}")
                 
                 try:
                     # Phase 2: Drive + Gmail (deferred, non-blocking)
                     await asyncio.sleep(5) 
                     from app.intelligence.scheduler import sync_all_for_user
-                    await sync_all_for_user(email)
-                    logger.info(f"Phase 2 (full sync) done for {email}")
+                    await sync_all_for_user(u_email)
                 except Exception as e:
-                    logger.error(f"Phase 2 sync fail for {email}: {e}")
+                    logger.error(f"Phase 2 sync fail for {u_email}: {e}")
 
             background_tasks.add_task(run_initial_sync)
-            logger.info(f"Returning login success for {email}")
+            logger.info(f"Returning login success for {u_email}")
             
             return {
                 "status": "success", 
-                "user_id": user.id,
-                "email": email,
+                "user_id": u_id,
+                "email": u_email,
                 "name": user_info.get('name'),
                 "picture": user_info.get('picture')
             }
