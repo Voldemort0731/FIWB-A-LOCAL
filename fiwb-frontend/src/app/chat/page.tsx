@@ -25,11 +25,23 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
     const hasPersonalReasoning = !!reasoningMatch;
     const reasoningItems = reasoningMatch && reasoningMatch[1] ? reasoningMatch[1].split(",").map(s => s.trim()) : [];
 
-    // 2. Parse Exact Documents Referenced
+    // 2. Parse Exact Documents Referenced (with Page Support)
     const docsRegex = /\[DOCUMENTS_REFERENCED(?::\s*(.*?))?\]/i;
     const docsMatch = content.match(docsRegex);
-    const hasDocs = !!docsMatch;
-    const docItems = docsMatch && docsMatch[1] ? docsMatch[1].split(",").map(s => s.trim()) : [];
+    const docItemsRaw = docsMatch && docsMatch[1] ? docsMatch[1].split(",").map(s => s.trim()) : [];
+
+    // Extract base titles and pages: "Syllabus [Page 1, 2]" -> { baseTitle: "Syllabus", pages: "1, 2" }
+    const docCitations = docItemsRaw.map(item => {
+        const pageMatch = item.match(/(.*?)\s*\[Page(?:s)?\s*(.*?)\]/i);
+        if (pageMatch) {
+            return {
+                baseTitle: pageMatch[1].trim(),
+                pages: pageMatch[2].trim(),
+                full: item
+            };
+        }
+        return { baseTitle: item, pages: null, full: item };
+    });
 
     // 3. Clean Content
     let cleanContent = content
@@ -42,9 +54,13 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
     const legacySources = Array.from(cleanContent.matchAll(sourceRegex)).map(m => m[1]);
     let markdownContent = cleanContent.replace(sourceRegex, "").trim();
 
-    // Merge explicit citations with retrieved sources (to ensure they appear even if LLM forgets to tag)
+    // Merge citations
     const retrievedTitles = sources.map(s => s.title);
-    const allSources = Array.from(new Set([...docItems, ...legacySources, ...retrievedTitles])).filter(s => s && s.toLowerCase() !== "none");
+    const allBaseSources = Array.from(new Set([
+        ...docCitations.map(d => d.baseTitle),
+        ...legacySources,
+        ...retrievedTitles
+    ])).filter(s => s && s.toLowerCase() !== "none");
 
     // Normalize LaTeX delimiters for better rendering
     let finalDisplayContent = markdownContent
@@ -55,21 +71,28 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
     if (!finalDisplayContent) finalDisplayContent = content.trim();
 
     return (
-        <div className="space-y-4 w-full">
+        <div className="space-y-6 w-full">
             {hasPersonalReasoning && (
-                <div className="flex flex-col gap-2 mb-4">
-                    <div className="flex items-center gap-2 px-3 py-1.5 glass bg-pink-500/5 border border-pink-500/20 rounded-lg text-pink-500 dark:text-pink-400 text-[10px] font-black uppercase tracking-widest w-fit shadow-lg shadow-pink-500/5">
-                        <Cpu size={12} className="text-pink-500" />
-                        Personal Reasoning Active
+                <div className="flex flex-col gap-3 mb-6 p-4 rounded-2xl bg-gradient-to-br from-pink-500/10 to-transparent border border-pink-500/10 shadow-inner">
+                    <div className="flex items-center gap-2 mb-1">
+                        <div className="p-1 px-2 glass bg-pink-500 rounded text-[9px] font-black text-white uppercase tracking-widest shadow-lg shadow-pink-500/20">
+                            Neural Inference
+                        </div>
+                        <span className="text-[10px] font-bold text-pink-600 dark:text-pink-400 opacity-70">Cognitive Nodes Active</span>
                     </div>
-                    {reasoningItems.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 pl-1">
+                    {reasoningItems.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
                             {reasoningItems.map((item, idx) => (
-                                <span key={idx} className="text-[9px] font-black text-pink-600/70 dark:text-pink-400/70 uppercase tracking-widest bg-pink-500/5 dark:bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/10">
-                                    {item}
-                                </span>
+                                <div key={idx} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/40 dark:bg-pink-500/10 border border-pink-500/20 shadow-sm transition-transform hover:scale-105">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-pink-500 animate-pulse" />
+                                    <span className="text-[10px] font-bold text-pink-700 dark:text-pink-300 uppercase tracking-wide">
+                                        {item}
+                                    </span>
+                                </div>
                             ))}
                         </div>
+                    ) : (
+                        <p className="text-[10px] text-pink-600/60 dark:text-pink-400/60 font-medium italic">Synthesizing personalized academic context...</p>
                     )}
                 </div>
             )}
@@ -99,39 +122,86 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
                 </ReactMarkdown>
             </div>
 
-            {allSources.length > 0 && (
-                <div className="pt-6 border-t border-gray-100 dark:border-white/5 mt-6 space-y-3">
-                    <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-500">Institutional Reference Report</span>
-                        <div className="flex-1 h-[1px] bg-gray-100 dark:bg-white/5" />
+            {allBaseSources.length > 0 && (
+                <div className="pt-10 border-t border-gray-100 dark:border-white/5 mt-10 space-y-5">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 shadow-lg shadow-blue-500/5">
+                                <Layers size={14} className="text-blue-500" />
+                            </div>
+                            <div>
+                                <h5 className="text-[11px] font-black uppercase tracking-[0.25em] text-gray-500">Academic Integrity Report</h5>
+                                <p className="text-[9px] text-gray-400 font-medium">Verified sources retrieved from your Digital Twin's vault</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-1 bg-white dark:bg-white/5 border border-gray-100 dark:border-white/10 rounded-full shadow-sm">
+                            <Quote size={10} className="text-blue-500/50" />
+                            <span className="text-[10px] font-black text-gray-600 dark:text-blue-400/80 uppercase tracking-tighter">{allBaseSources.length} Citations</span>
+                        </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                        {allSources.map((sourceTitle, idx) => {
-                            const matchedSource = sources.find(s => s.title.toLowerCase() === sourceTitle.toLowerCase());
-                            const displayTitle = matchedSource?.display || sourceTitle;
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+                        {allBaseSources.map((baseTitle, idx) => {
+                            const matchedSource = sources.find(s => s.title.toLowerCase() === baseTitle.toLowerCase());
+                            const citation = docCitations.find(d => d.baseTitle.toLowerCase() === baseTitle.toLowerCase());
+                            const displayTitle = matchedSource?.display || baseTitle;
                             const link = matchedSource?.link;
+                            const pages = citation?.pages;
 
                             return (
-                                <div key={idx} className="group/source relative">
-                                    {link ? (
-                                        <a
-                                            href={link}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-2 px-3 py-1.5 glass-dark border border-white/5 rounded-full text-[10px] font-bold text-gray-700 dark:text-gray-300 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all shadow-sm cursor-pointer"
-                                        >
-                                            <BookOpen size={10} className="text-blue-500 group-hover/source:scale-110 transition-transform" />
-                                            {displayTitle}
-                                            <div className="w-1 h-1 rounded-full bg-blue-500/50" />
-                                            <span className="text-[8px] text-blue-500/80 uppercase">Open</span>
-                                        </a>
-                                    ) : (
-                                        <div className="flex items-center gap-2 px-3 py-1.5 glass-dark border border-white/5 rounded-full text-[10px] font-bold text-gray-700 dark:text-gray-300 shadow-sm opacity-80">
-                                            <BookOpen size={10} className="text-gray-400" />
-                                            {displayTitle}
+                                <motion.div
+                                    key={idx}
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: idx * 0.05 }}
+                                    whileHover={{ y: -4, scale: 1.01 }}
+                                    className="group/source relative h-full"
+                                >
+                                    <div className="h-full flex flex-col p-4 rounded-[24px] glass-dark border border-gray-200/50 dark:border-white/5 bg-white/70 dark:bg-black/60 hover:border-blue-500/40 hover:bg-blue-500/[0.02] transition-all duration-300 shadow-xl shadow-black/5">
+                                        <div className="flex items-start justify-between mb-3">
+                                            <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/20">
+                                                <FileText size={18} className="text-white" />
+                                            </div>
+                                            {pages ? (
+                                                <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                                                    <BookOpen size={10} className="text-blue-500" />
+                                                    <span className="text-[10px] font-extrabold text-blue-500 uppercase">Pages {pages}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-white/5 rounded-md">
+                                                    <span className="text-[8px] font-bold text-gray-400 uppercase">Document</span>
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
+
+                                        <h4 className="text-[12px] font-black text-gray-900 dark:text-gray-100 line-clamp-2 mb-4 leading-tight group-hover/source:text-blue-600 dark:group-hover/source:text-blue-400 transition-colors">
+                                            {displayTitle}
+                                        </h4>
+
+                                        <div className="mt-auto pt-3 border-t border-gray-100 dark:border-white/5 flex items-center justify-between">
+                                            {link ? (
+                                                <a
+                                                    href={link}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20 active:scale-95"
+                                                >
+                                                    <RefreshCw size={10} className="group-hover/source:rotate-180 transition-transform duration-500" />
+                                                    Deep Research
+                                                </a>
+                                            ) : (
+                                                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 dark:bg-white/5 text-gray-500 rounded-xl text-[10px] font-black uppercase tracking-wider opacity-60">
+                                                    <Settings size={10} />
+                                                    Legacy Asset
+                                                </div>
+                                            )}
+                                            <div className="flex items-center -space-x-1">
+                                                <div className="w-5 h-5 rounded-full border-2 border-white dark:border-gray-900 bg-blue-500 flex items-center justify-center">
+                                                    <Check size={8} className="text-white" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </motion.div>
                             );
                         })}
                     </div>

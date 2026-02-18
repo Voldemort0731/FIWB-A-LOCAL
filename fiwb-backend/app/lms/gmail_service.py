@@ -58,8 +58,8 @@ class GmailSyncService:
         if not gmail_course:
             gmail_course = Course(
                 id="GMAIL_INBOX",
-                name="Neural Assistant Knowledge",
-                professor="Personal Assistant",
+                name="Gmail",
+                professor="Mail Service",
                 platform="Gmail"
             )
             db.add(gmail_course)

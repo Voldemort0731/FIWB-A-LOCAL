@@ -257,8 +257,10 @@ class DriveSyncService:
             # Extract PDF Text
             pdf_reader = pypdf.PdfReader(io.BytesIO(fh.getvalue()))
             text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() or ""
+            for i, page in enumerate(pdf_reader.pages):
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    text += f"\n--- [PAGE {i+1}] ---\n{page_text}\n"
             
             if not text.strip():
                 return f"PDF File: {file_name} (Scanned document or unreadable text). View original file to read content."

@@ -76,7 +76,7 @@ export default function Dashboard() {
         // 1. Search Courses
         courses.forEach(c => {
             if (c.name.toLowerCase().includes(query) || (c.professor && c.professor.toLowerCase().includes(query))) {
-                results.push({ type: 'course', id: c.id, title: c.name, subtitle: c.professor || 'Course', icon: GraduationCap });
+                results.push({ type: 'course', id: c.id, title: c.id === 'GMAIL_INBOX' ? 'Gmail' : c.name, subtitle: 'Course', icon: GraduationCap });
             }
         });
 
@@ -88,7 +88,7 @@ export default function Dashboard() {
                 results.push({
                     type: 'email',
                     title: note.title || "Untitled Intelligence",
-                    subtitle: 'Neural Repository',
+                    subtitle: 'Mail',
                     icon: Mail,
                     action: () => setSelectedEmail(note)
                 });
@@ -404,10 +404,8 @@ export default function Dashboard() {
                                                 <BookOpen size={18} />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <h4 className="font-bold text-gray-900 dark:text-white truncate">{course.name}</h4>
+                                                <h4 className="font-bold text-gray-900 dark:text-white truncate">{course.id === 'GMAIL_INBOX' ? 'Gmail' : course.name}</h4>
                                                 <div className="flex items-center gap-2">
-                                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{course.professor}</p>
-                                                    <span className="w-1 h-1 rounded-full bg-gray-300" />
                                                     <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">{course.platform}</span>
                                                 </div>
                                             </div>
@@ -436,7 +434,7 @@ export default function Dashboard() {
                             <div className="p-2 bg-indigo-600/10 rounded-xl text-indigo-600">
                                 <Mail size={18} />
                             </div>
-                            <h3 className="font-black tracking-tight">Neural Intel</h3>
+                            <h3 className="font-black tracking-tight">Gmail</h3>
                         </div>
 
                         <div className="flex-1 px-8 py-4 space-y-4 max-h-[800px] overflow-y-auto scrollbar-premium pb-24">
@@ -464,7 +462,7 @@ export default function Dashboard() {
                                                 </div>
                                                 <div className="min-w-0 flex-1">
                                                     <div className="flex items-center justify-between mb-1">
-                                                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">Neural Repository</span>
+                                                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">Mail</span>
                                                         <span className="text-[10px] font-bold text-gray-400">{new Date(item.created_at).toLocaleDateString()}</span>
                                                     </div>
                                                     <h3 className="text-sm font-bold text-gray-900 dark:text-white group-hover:text-blue-500 transition-colors truncate">
@@ -496,7 +494,7 @@ export default function Dashboard() {
                                         <Mail size={32} />
                                     </div>
                                     <div className="space-y-1">
-                                        <p className="text-sm font-black text-gray-900 dark:text-white">Neural Repository Ready</p>
+                                        <p className="text-sm font-black text-gray-900 dark:text-white">Mail Ready</p>
                                         <p className="text-xs text-gray-500 font-medium">Synced with your entire academic inbox. Click 'Refresh Classroom' if empty.</p>
                                     </div>
                                 </div>
@@ -561,7 +559,7 @@ export default function Dashboard() {
                                     <Zap size={18} className="text-yellow-400 fill-yellow-400" />
                                     <span className="text-xs font-black uppercase tracking-[0.2em]">Neural Insight</span>
                                 </div>
-                                <h3 className="text-xl font-black leading-tight">Sync complete. Your neural repository is up to date.</h3>
+                                <h3 className="text-xl font-black leading-tight">Sync complete. Your mail repository is up to date.</h3>
                                 <p className="text-white/80 text-sm font-medium leading-relaxed">Integrated {courses.length} courses and {gmailMaterials.length} inbox highlights into your AI Chatbot repository.</p>
                                 <button
                                     onClick={() => router.push('/chat')}
