@@ -80,17 +80,22 @@ class LMSSyncService:
                     user.courses.append(db_course)
                 db_course.last_synced = datetime.utcnow()
 
-            # Safety: only prune if API returned real data
-            existing_gc = [c for c in user.courses if c.platform == "Google Classroom"]
-            if len(courses_data) == 0 and len(existing_gc) > 0:
-                logger.warning(f"[Sync] API returned 0 courses but user had {len(existing_gc)}. Skipping cleanup.")
-            else:
+            # Cleanup: Remove courses not in Google anymore.
+            # SAFETY GUARD: Only run cleanup if we actually got data back.
+            # If Google returns [] (due to error/timeout), DO NOT WIPE the database.
+            if len(courses_data) > 0:
+                active_ids = {c['id'] for c in courses_data}
+                
+                # Refresh user to ensure we have latest state
+                db.refresh(user)
+                
                 for uc in list(user.courses):
                     if uc.platform == "Google Classroom" and uc.id not in active_ids:
-                        logger.info(f"[Sync] Removing unenrolled course: {uc.name}")
+                        logger.warning(f"[Sync] Removing course {uc.name} (no longer in Google)")
                         user.courses.remove(uc)
-
-            db.commit()
+                db.commit()
+            else:
+                logger.warning("[Sync] Google returned 0 courses. Skipping cleanup to prevent accidental data wipe.")
             logger.info(f"[Sync] Phase 1 DONE for {self.user_email} — {len(courses_data)} courses in DB")
 
         except Exception as e:
