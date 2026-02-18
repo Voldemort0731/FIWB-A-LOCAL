@@ -10,6 +10,8 @@ import datetime
 import json
 import asyncio
 
+from app.utils.locks import GLOBAL_API_LOCK
+
 class DriveSyncService:
     def __init__(self, access_token: str, user_email: str, refresh_token: str = None):
         from app.config import settings
@@ -29,9 +31,10 @@ class DriveSyncService:
         """Thread-safe and async-safe service builder."""
         if self.service is None:
             try:
-                self.service = await asyncio.to_thread(
-                    lambda: build('drive', 'v3', credentials=self.creds, static_discovery=True)
-                )
+                async with GLOBAL_API_LOCK:
+                    self.service = await asyncio.to_thread(
+                        lambda: build('drive', 'v3', credentials=self.creds, static_discovery=True)
+                    )
             except Exception as e:
                 print(f"Failed to initialize Drive service: {e}")
                 raise e
@@ -40,17 +43,18 @@ class DriveSyncService:
     async def list_root_folders(self):
         """List folders in the root of Google Drive."""
         service = await self._get_service()
-        results = await asyncio.to_thread(
-            lambda: service.files().list(
-                q="mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false",
-                fields="files(id, name, webViewLink)",
-                pageSize=50
-            ).execute()
-        )
+        async with GLOBAL_API_LOCK:
+            results = await asyncio.to_thread(
+                lambda: service.files().list(
+                    q="mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false",
+                    fields="files(id, name, webViewLink)",
+                    pageSize=50
+                ).execute()
+            )
         return results.get('files', [])
 
     async def sync_folder(self, folder_id: str):
-        """Sync all PDF and Text files from a specific folder."""
+        # ... (course/db setup omitted for brevity, unchanged) ...
         # Ensure a virtual "Google Drive" course exists in DB for grouping
         db = SessionLocal()
         drive_course = db.query(Course).filter(Course.id == "GOOGLE_DRIVE").first()
@@ -71,7 +75,7 @@ class DriveSyncService:
             db.commit()
         
         user_id = user.id if user else None
-        db.close() # Release connection immediately
+        db.close()
 
         # Fetch files in folder - support many file types with pagination
         mime_types = [
@@ -84,26 +88,19 @@ class DriveSyncService:
             'image/jpeg', 'image/png', 'image/gif', 'text/html', 'text/csv', 'text/markdown'
         ]
         
-        # Recursively fetch all files in folder and subfolders
         files = await self._get_all_files_recursive(folder_id, mime_types)
-        
         print(f"[Production-Drive] Found {len(files)} files for {self.user_email}")
         synced_count = 0
 
-        # Process files in small batches to avoid event loop starvation
-        batch_size = 2 # Heavy extraction
+        batch_size = 2
         for i in range(0, len(files), batch_size):
             batch = files[i:i + batch_size]
-            
             for file in batch:
                 file_id = file['id']
-                
-                # Check if already synced (using new short-lived session)
                 check_db = SessionLocal()
                 try:
                     existing = check_db.query(Material).filter(Material.id == file_id).first()
-                    if existing:
-                        continue
+                    if existing: continue
                 finally:
                     check_db.close()
 
@@ -111,7 +108,6 @@ class DriveSyncService:
                     content = await self._get_file_content(file)
                     if not content: continue
                     
-                    # Save to Local DB (new session)
                     write_db = SessionLocal()
                     try:
                         new_material = Material(
@@ -128,7 +124,6 @@ class DriveSyncService:
                         write_db.add(new_material)
                         write_db.commit()
 
-                        # Sync to Supermemory
                         await self.sm_client.add_document(
                             content=content,
                             title=file['name'],
@@ -140,9 +135,7 @@ class DriveSyncService:
                         write_db.close()
                 except Exception as e:
                     print(f"Failed to extract content for {file['name']}: {e}")
-            
             await asyncio.sleep(0.5)
-
         return synced_count
 
     async def _get_file_content(self, file_meta):
@@ -151,26 +144,28 @@ class DriveSyncService:
         service = await self._get_service()
         
         # Google Docs / Sheets / Slides
-        if 'google-apps' in mime_type:
-            target_mime = 'text/plain' if 'document' in mime_type or 'presentation' in mime_type else 'text/csv'
-            request = service.files().export_media(fileId=file_id, mimeType=target_mime)
-        else:
-            request = service.files().get_media(fileId=file_id)
+        async with GLOBAL_API_LOCK:
+            if 'google-apps' in mime_type:
+                target_mime = 'text/plain' if 'document' in mime_type or 'presentation' in mime_type else 'text/csv'
+                request = service.files().export_media(fileId=file_id, mimeType=target_mime)
+            else:
+                request = service.files().get_media(fileId=file_id)
 
-        try:
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while done is False:
-                status, done = await asyncio.to_thread(downloader.next_chunk)
-            
-            if mime_type == 'application/pdf':
-                pdf_reader = pypdf.PdfReader(io.BytesIO(fh.getvalue()))
-                return "\n".join([page.extract_text() for page in pdf_reader.pages])
-            
-            return fh.getvalue().decode('utf-8', errors='ignore')
-        except:
-            return ""
+            try:
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while done is False:
+                    # Downloading chunks MUST be locked as it uses httplib2 transport
+                    status, done = await asyncio.to_thread(downloader.next_chunk)
+                
+                if mime_type == 'application/pdf':
+                    pdf_reader = pypdf.PdfReader(io.BytesIO(fh.getvalue()))
+                    return "\n".join([page.extract_text() for page in pdf_reader.pages])
+                
+                return fh.getvalue().decode('utf-8', errors='ignore')
+            except:
+                return ""
     
     async def _get_all_files_recursive(self, folder_id: str, mime_types: list) -> list:
         all_files = []
@@ -187,9 +182,10 @@ class DriveSyncService:
             query = f"'{current_folder_id}' in parents and (mimeType = 'application/vnd.google-apps.folder' or {mime_query}) and trashed = false"
             page_token = None
             while True:
-                results = await asyncio.to_thread(
-                    lambda: service.files().list(q=query, fields="nextPageToken, files(id, name, mimeType, webViewLink, createdTime)", pageToken=page_token).execute()
-                )
+                async with GLOBAL_API_LOCK:
+                    results = await asyncio.to_thread(
+                        lambda: service.files().list(q=query, fields="nextPageToken, files(id, name, mimeType, webViewLink, createdTime)", pageToken=page_token).execute()
+                    )
                 items = results.get('files', [])
                 for item in items:
                     if item['mimeType'] == 'application/vnd.google-apps.folder':
