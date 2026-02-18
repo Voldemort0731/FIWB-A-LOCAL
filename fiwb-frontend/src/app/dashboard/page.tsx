@@ -412,6 +412,36 @@ export default function Dashboard() {
                                             <ChevronRight size={14} className="text-gray-300 group-hover:text-blue-500 transition-all translate-x-0 group-hover:translate-x-1" />
                                         </div>
                                     ))
+                            ) : (courses.length === 0 && !loading) ? (
+                                <div className="text-center py-12 px-6 space-y-4 bg-gray-50/50 dark:bg-white/2 rounded-[2rem] border border-dashed border-gray-200 dark:border-white/10">
+                                    <div className="w-16 h-16 bg-gray-100 dark:bg-white/5 rounded-3xl mx-auto flex items-center justify-center text-gray-400">
+                                        <BookOpen size={32} />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-sm font-black text-gray-900 dark:text-white">Workspace Ready</h3>
+                                        <p className="text-xs text-gray-500 font-medium">No courses have been synced yet.</p>
+                                    </div>
+                                    <button
+                                        onClick={handleSync}
+                                        disabled={syncing}
+                                        className="px-6 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest shadow-lg shadow-blue-600/20 hover:bg-blue-500 transition-all disabled:opacity-50"
+                                    >
+                                        {syncing ? "Syncing..." : "Sync Now"}
+                                    </button>
+                                    <div className="pt-4 border-t border-gray-200 dark:border-white/5">
+                                        <details className="text-left">
+                                            <summary className="text-[10px] text-gray-400 cursor-pointer hover:text-blue-500">Debug Info</summary>
+                                            <pre className="mt-2 text-[9px] bg-gray-900 text-green-400 p-2 rounded overflow-x-auto">
+                                                {JSON.stringify({
+                                                    api: API_URL,
+                                                    email: localStorage.getItem("user_email"),
+                                                    courses: courses.length,
+                                                    error: academicError
+                                                }, null, 2)}
+                                            </pre>
+                                        </details>
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="text-center py-10 space-y-3">
                                     <div className="w-12 h-12 bg-gray-100 dark:bg-white/5 rounded-full mx-auto flex items-center justify-center text-gray-400 font-bold">

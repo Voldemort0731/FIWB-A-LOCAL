@@ -6,17 +6,25 @@ from app.models import Course, User, Material
 from app.utils.email import standardize_email
 from datetime import datetime
 import json
+import logging
 
+logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
 
 @router.get("/")
 def get_courses(user_email: str, db: Session = Depends(get_db)):
     """Fetch all courses for a user from the local database."""
     email = standardize_email(user_email)
+    logger.info(f"[API] FETCH COURSES for: {user_email} -> {email}")
+
     user = db.query(User).filter(User.email == email).options(selectinload(User.courses)).first()
     if not user:
+        logger.warning(f"[API] User not found: {email}")
         return []
 
+    count = len(user.courses)
+    logger.info(f"[API] Found user {user.id} ({user.email}), returning {count} courses")
+    
     return [
         {
             "id": c.id,
@@ -51,7 +59,6 @@ def get_course(course_id: str, user_email: str, db: Session = Depends(get_db)):
 def get_course_materials(course_id: str, user_email: str, db: Session = Depends(get_db)):
     """
     Fetch all materials for a course from the local DB.
-    Local DB is the source of truth — fast, no network calls.
     """
     email = standardize_email(user_email)
 

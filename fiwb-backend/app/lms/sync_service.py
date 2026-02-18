@@ -32,10 +32,19 @@ class LMSSyncService:
 
         try:
             logger.info(f"[Sync] Phase 1 starting for {self.user_email}")
+            # Ensure user exists (self-healing race condition check)
             user = db.query(User).filter(User.email == self.user_email).first()
             if not user:
-                logger.error(f"[Sync] User {self.user_email} not found in DB.")
-                return
+                logger.warning(f"[Sync] User {self.user_email} not found. Creating placeholder.")
+                user = User(
+                    email=self.user_email,
+                    google_id=self.user_email, # temporary ID until next login
+                    access_token=self.access_token,
+                    refresh_token=self.refresh_token
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
 
             user_id = user.id
 

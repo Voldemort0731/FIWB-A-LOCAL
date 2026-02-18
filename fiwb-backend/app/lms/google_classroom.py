@@ -8,10 +8,10 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
-# Per-instance lock to prevent concurrent httplib2 calls on the same service object.
-# httplib2 is NOT thread-safe — two simultaneous asyncio.to_thread calls on the
-# same service object cause a segfault. This lock serializes them per-user.
-_instance_lock = threading.Lock()
+# Global lock for the entire process.
+# httplib2/ssl in Python 3.12+ segfaults if multiple threads touch SSL sockets simultaneously,
+# even across different service objects. We must serialize ALL Google API calls globally.
+GLOBAL_API_LOCK = asyncio.Lock()
 
 class GoogleClassroomClient:
     def __init__(self, token: str, refresh_token: str = None):
@@ -23,15 +23,14 @@ class GoogleClassroomClient:
             client_secret=settings.GOOGLE_CLIENT_SECRET
         )
         self._service = None
-        # Each instance gets its own asyncio lock to serialize its own API calls
-        self._lock = asyncio.Lock()
+        # Use the global lock, not per-instance
 
     async def _get_service(self):
         """Build the Classroom service (lazy, once per instance)."""
         if self._service is not None:
             return self._service
 
-        async with self._lock:
+        async with GLOBAL_API_LOCK:
             # Double-check after acquiring lock
             if self._service is not None:
                 return self._service
@@ -55,10 +54,10 @@ class GoogleClassroomClient:
 
     async def _execute(self, request_fn):
         """
-        Execute a Google API request safely.
-        Serializes calls through the instance lock to prevent httplib2 thread-safety crashes.
+        Execute a Google API request safely using the GLOBAL process lock.
+        Prevents ANY concurrent Google API calls process-wide.
         """
-        async with self._lock:
+        async with GLOBAL_API_LOCK:
             return await asyncio.to_thread(request_fn)
 
     async def get_courses(self):
