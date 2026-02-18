@@ -110,9 +110,11 @@ async def global_sync_loop():
             db.close()
 
             for email in user_emails:
-                await sync_all_for_user(email)
-                # Small gap between users to prevent overwhelming APIs
-                await asyncio.sleep(5)
+                from app.utils.concurrency import GlobalSyncManager
+                # Defer to global manager to prevent overwhelming the server
+                asyncio.create_task(GlobalSyncManager.run_deep_task(sync_all_for_user(email)))
+                # Small gap between task submissions
+                await asyncio.sleep(2)
 
             logger.info(f"😴 [Auto-Sync] Cycle complete. Sleeping for {interval_seconds//60} mins.")
         except Exception as e:

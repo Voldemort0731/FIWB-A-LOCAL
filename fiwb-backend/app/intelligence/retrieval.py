@@ -11,8 +11,9 @@ class RetrievalOrchestrator:
     def __init__(self, user_email: str):
         # Standardize email to full version
         self.user_email = standardize_email(user_email)
-        self.sm_client = SupermemoryClient()
-        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        from app.utils.clients import SharedClients
+        self.sm_client = SharedClients.get_supermemory()
+        self.client = SharedClients.get_openai()
     
     async def _contextualize_query(self, query: str, history: List[Dict]) -> str:
         """Rewrite the query to be self-contained based on conversation history."""

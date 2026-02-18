@@ -3,7 +3,7 @@ from app.config import settings
 import json
 
 class SupermemoryClient:
-    def __init__(self):
+    def __init__(self, client: httpx.AsyncClient = None):
         self.base_url = settings.SUPERMEMORY_URL
         headers = {}
         if settings.SUPERMEMORY_API_KEY:
@@ -12,59 +12,50 @@ class SupermemoryClient:
         # Add stealth/modern headers
         headers["User-Agent"] = "FIWB-AI/1.0 (Institutional Academic Hub)"
         
-        self.client = httpx.AsyncClient(headers=headers)
+        # Use shared client if provided, otherwise create one
+        self.client = client if client else httpx.AsyncClient(headers=headers)
     
     async def add_document(self, content: str, metadata: dict, title: str = None, description: str = None):
-        """Add a document to Supermemory with robust error handling for 400s and payload limits."""
-        try:
-            # 1. Safety Truncation: Supermemory usually has limits around 30k-100k characters per doc
-            # We truncate to 50k to be safe but informative.
-            safe_content = content
-            if len(content) > 60000:
-                print(f"DEBUG SM: Content for '{title}' too large ({len(content)} chars). Truncating to 60k.")
-                safe_content = content[:60000] + "\n\n[TRUNCATED DUE TO SIZE LIMITS]"
+        """Add a document to Supermemory with robust error handling and retries."""
+        import asyncio
+        import random
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                safe_content = content
+                if len(content) > 60000:
+                    safe_content = content[:60000] + "\n\n[TRUNCATED]"
 
-            # Filter out None values from metadata
-            clean_metadata = {k: v for k, v in metadata.items() if v is not None}
-            payload = {
-                "content": safe_content, 
-                "metadata": clean_metadata
-            }
-            if title:
-                payload["title"] = title
-            if description:
-                payload["description"] = description
-            
-            response = await self.client.post(
-                f"{self.base_url}/v3/documents",
-                json=payload
-            )
-            
-            if response.status_code == 400:
-                error_detail = response.text
-                try:
-                    error_json = response.json()
-                    error_detail = error_json.get('message') or error_json.get('error') or response.text
-                except: pass
-                print(f"❌ Supermemory 400 Error for '{title}': {error_detail}")
-                return None
-
-            response.raise_for_status()
-            
-            if response.status_code in [200, 201]:
-                res_json = response.json()
-                doc_id = res_json.get('documentId') or res_json.get('id') or res_json.get('uuid')
-                print(f"✅ DEBUG SM: Added document. ID: {doc_id} | Title: {title}")
-                return res_json
+                clean_metadata = {k: v for k, v in metadata.items() if v is not None}
+                payload = {"content": safe_content, "metadata": clean_metadata}
+                if title: payload["title"] = title
+                if description: payload["description"] = description
                 
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Supermemory HTTP Error {e.response.status_code} for '{title}': {e.response.text}")
-            return None
-        except Exception as e:
-            print(f"❌ DEBUG SM: Unexpected Exception adding document '{title}': {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+                response = await self.client.post(f"{self.base_url}/v3/documents", json=payload)
+                
+                if response.status_code == 429:
+                    wait = (2 ** attempt) + random.random()
+                    print(f"⚠️ SM Rate Limit (429). Retrying in {wait:.2f}s...")
+                    await asyncio.sleep(wait)
+                    continue
+
+                if response.status_code == 400:
+                    print(f"❌ Supermemory 400 Error: {response.text}")
+                    return None
+
+                response.raise_for_status()
+                return response.json()
+                
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    continue
+                print(f"❌ Supermemory HTTP Error {e.response.status_code}")
+                return None
+            except Exception as e:
+                print(f"❌ Supermemory Unexpected Error: {e}")
+                return None
+        return None
     
     async def search(self, query: str, filters: dict = None, limit: int = 5):
         """Search Supermemory."""

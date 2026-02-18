@@ -16,14 +16,19 @@ export default function Home() {
     onSuccess: async (codeResponse) => {
       setLoading(true);
       setError("");
+
+      // Timeout guard: if backend hangs, don't leave user stuck
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
       try {
         const loginResponse = await fetch(`${API_URL}/api/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: codeResponse.code,
-          }),
+          body: JSON.stringify({ code: codeResponse.code }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         if (!loginResponse.ok) {
           const errorData = await loginResponse.json();
@@ -37,16 +42,18 @@ export default function Home() {
         localStorage.setItem("user_name", data.name);
         localStorage.setItem("user_picture", data.picture);
 
-        // Prefetch for instant transition
         router.prefetch("/dashboard");
         router.push("/dashboard");
-      } catch (err) {
+      } catch (err: any) {
+        clearTimeout(timeoutId);
         console.error("Login error:", err);
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to initialize: ${errorMessage}. Check if NEXT_PUBLIC_API_URL is set correctly in Vercel.`);
+        if (err.name === "AbortError") {
+          setError("Connection timed out. The server may be starting up — please try again in 30 seconds.");
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          setError(`Login failed: ${msg}`);
+        }
         setLoading(false);
-      } finally {
-        // No-op
       }
     },
     onError: (error) => {

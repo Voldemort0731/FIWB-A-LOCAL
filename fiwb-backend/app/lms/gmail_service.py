@@ -26,24 +26,23 @@ class GmailSyncService:
             client_secret=settings.GOOGLE_CLIENT_SECRET,
         )
         self.user_email = standardize_email(user_email)
-        self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.sm_client = SupermemoryClient()
+        
+        from app.utils.clients import SharedClients
+        self.openai_client = SharedClients.get_openai()
+        self.sm_client = SharedClients.get_supermemory()
         self.service = None 
 
     async def _get_service(self):
         """Thread-safe and async-safe service builder for the current instance."""
         if self.service is None:
-            from app.utils.google_lock import GoogleApiLock
-            async with GoogleApiLock.get_lock(): # Protect global SSL resources on macOS
-                if self.service is None:
-                    logger.info(f"Initializing Gmail Service for {self.user_email}...")
-                    try:
-                        self.service = await asyncio.to_thread(
-                            lambda: build('gmail', 'v1', credentials=self.creds, static_discovery=True)
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to initialize Gmail service for {self.user_email}: {e}")
-                        raise e
+            logger.info(f"Initializing Gmail Service for {self.user_email}...")
+            try:
+                self.service = await asyncio.to_thread(
+                    lambda: build('gmail', 'v1', credentials=self.creds, static_discovery=True)
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize Gmail service for {self.user_email}: {e}")
+                raise e
         return self.service
 
     async def sync_recent_emails(self, limit=50):
@@ -75,11 +74,9 @@ class GmailSyncService:
 
         try:
             service = await self._get_service()
-            from app.utils.google_lock import GoogleApiLock
-            async with GoogleApiLock.get_lock():
-                results = await asyncio.to_thread(
-                    lambda: service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
-                )
+            results = await asyncio.to_thread(
+                lambda: service.users().messages().list(userId='me', q=query, maxResults=limit).execute()
+            )
         except Exception as e:
             logger.error(f"Gmail list failed: {e}")
             db.close()
@@ -114,11 +111,9 @@ class GmailSyncService:
                 try:
                     # Fetch full content
                     service = await self._get_service()
-                    from app.utils.google_lock import GoogleApiLock
-                    async with GoogleApiLock.get_lock():
-                        message = await asyncio.to_thread(
-                            lambda: service.users().messages().get(userId='me', id=msg_id).execute()
-                        )
+                    message = await asyncio.to_thread(
+                        lambda: service.users().messages().get(userId='me', id=msg_id).execute()
+                    )
                     
                     payload = message.get('payload', {})
                     headers = payload.get('headers', [])

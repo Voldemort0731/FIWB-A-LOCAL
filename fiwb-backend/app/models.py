@@ -58,11 +58,11 @@ class Material(Base):
     __tablename__ = "materials"
 
     id = Column(String, primary_key=True, index=True) # Google Classroom ID
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Technical owner
-    course_id = Column(String, ForeignKey("courses.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True) 
+    course_id = Column(String, ForeignKey("courses.id"), index=True)
     title = Column(String)
     content = Column(Text) # Description or text content
-    type = Column(String) # assignment, material, announcement
+    type = Column(String, index=True) # assignment, material, announcement
     due_date = Column(String, nullable=True) # ISO Date string
     created_at = Column(String, nullable=True) # ISO Timestamp
     attachments = Column(Text, default="[]") # JSON string of attachments
@@ -75,7 +75,7 @@ class ChatThread(Base):
     __tablename__ = "chat_threads"
     
     id = Column(String, primary_key=True, index=True) # UUID string
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -87,7 +87,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
     
     id = Column(Integer, primary_key=True, index=True)
-    thread_id = Column(String, ForeignKey("chat_threads.id"))
+    thread_id = Column(String, ForeignKey("chat_threads.id"), index=True)
     role = Column(String) # user, assistant, system
     content = Column(Text)
     attachment = Column(Text, nullable=True) # Base64 or URL
