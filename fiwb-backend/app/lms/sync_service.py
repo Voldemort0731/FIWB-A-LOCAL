@@ -101,21 +101,38 @@ class LMSSyncService:
                     user.courses.append(db_course)
                 db_course.last_synced = datetime.utcnow()
 
-            # Commit Phase 1 immediately so Frontend stops showing 'Initializing'
+            # PHASE 3: Cleanup (Un-enrolled courses)
+            # This happens before we start Phase 2 so we don't hold the DB open
+            try:
+                for user_course in list(user.courses):
+                    if user_course.platform == "Google Classroom" and user_course.id not in active_course_ids:
+                        logger.info(f"🗑️ Removing un-enrolled course {user_course.name}")
+                        user.courses.remove(user_course)
+                db.commit()
+            except Exception as cleanup_err:
+                logger.error(f"Cleanup failed: {cleanup_err}")
+
+            # Commit Phase 1 results
             db.commit()
             logger.info(f"✅ PHASE 1 COMPLETE: {len(courses_data)} courses visible for {self.user_email}")
+            
+            # CRITICAL: Release the session before starting Phase 2 (Content Sync)
+            # This allows other users to use the connection while this user is doing deep sync
+            user_id = user.id
+            db.close()
 
             # PHASE 2: Content Sync (Deep)
-            semaphore = asyncio.Semaphore(1) # Slightly lower to preserve rate limits during deep sync
+            # Use a semaphored approach to prevent overwhelming the DB/API
+            semester_semaphore = asyncio.Semaphore(1) 
             
             async def deep_sync_course(course_data):
-                async with semaphore:
+                async with semester_semaphore:
                     task_db = SessionLocal()
                     try:
                         c_id = course_data['id']
                         c_name = course_data['name']
                         
-                        # 1. Update professor name first (deferred metadata)
+                        # Fetch/Update professor name
                         professor_name = "Unknown Professor"
                         try:
                             service = await self.gc_client._get_service()
@@ -128,38 +145,36 @@ class LMSSyncService:
                             if teachers:
                                 professor_name = teachers[0].get('profile', {}).get('name', {}).get('fullName', 'Unknown')
                                 
-                                # Update DB immediately so card looks complete
-                                def update_prof():
-                                    dbc = task_db.query(Course).filter(Course.id == c_id).first()
-                                    if dbc:
-                                        dbc.professor = professor_name
-                                        task_db.commit()
-                                await asyncio.to_thread(update_prof)
+                                # Update DB immediately
+                                dbc = task_db.query(Course).filter(Course.id == c_id).first()
+                                if dbc:
+                                    dbc.professor = professor_name
+                                    task_db.commit()
                         except Exception as prof_err:
                             logger.error(f"  Error fetching prof for {c_name}: {prof_err}")
 
                         logger.info(f"  PHASE 2: Syncing content for {c_name}...")
-                        await self._sync_course_content(task_db, c_id, c_name, professor_name, user.id)
+                        await self._sync_course_content(task_db, c_id, c_name, professor_name, user_id)
                     except Exception as e:
                         logger.error(f"  PHASE 2 ERROR [{c_name}]: {e}")
                     finally:
                         task_db.close()
 
-            # Run content sync tasks
+            # Run content sync tasks in parallel
             await asyncio.gather(*(deep_sync_course(c) for c in courses_data))
-
-            # PHASE 3: Cleanup
-            # Remove links to no longer active courses
-            for user_course in list(user.courses):
-                if user_course.platform == "Google Classroom" and user_course.id not in active_course_ids:
-                    logger.info(f"🗑️ Removing un-enrolled course {user_course.name}")
-                    user.courses.remove(user_course)
-            
-            db.commit()
             logger.info(f"✅ FULL SYNC COMPLETE for {self.user_email}")
-        
+            return
+            
+        except Exception as e:
+            logger.error(f"Sync failed for {self.user_email}: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
-            db.close()
+            # Safety net closure
+            try:
+                db.close()
+            except:
+                pass
 
     async def _sync_course_content(self, db, course_id: str, course_name: str, professor_name: str, user_id: int):
         """Sync a single course's content to Supermemory, avoiding duplicates."""

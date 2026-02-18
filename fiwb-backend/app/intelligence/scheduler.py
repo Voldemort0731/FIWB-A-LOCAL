@@ -20,58 +20,79 @@ async def sync_all_for_user(user_email: str):
             return
 
         logger.info(f"🔄 [Auto-Sync] Starting background cycle for {user_email}")
+        
+        # Extract necessary data to allow closing the session
+        access_token = user.access_token
+        refresh_token = user.refresh_token
+        moodle_url = user.moodle_url
+        moodle_token = user.moodle_token
+        watched_drive_folders = user.watched_drive_folders
+        
+        # Close main session so we don't hold a pool connection during long API calls
+        db.close()
 
         # 1. Google Classroom Sync
         try:
-            classroom_service = LMSSyncService(user.access_token, user_email, user.refresh_token)
+            classroom_service = LMSSyncService(access_token, user_email, refresh_token)
             await classroom_service.sync_all_courses()
             
-            # Save refreshed token if changed
-            if classroom_service.gc_client.creds.token != user.access_token:
-                user.access_token = classroom_service.gc_client.creds.token
-                db.commit()
-                logger.info(f"🔄 [Auto-Sync] Access token refreshed and saved for {user_email}")
-                
-            logger.info(f"✅ [Auto-Sync] Classroom synced for {user_email}")
+            # Update token if refreshed
+            new_token = classroom_service.gc_client.creds.token
+            if new_token and new_token != access_token:
+                update_db = SessionLocal()
+                try:
+                    u = update_db.query(User).filter(User.email == user_email).first()
+                    if u:
+                        u.access_token = new_token
+                        update_db.commit()
+                        logger.info(f"🔄 [Auto-Sync] Access token updated for {user_email}")
+                finally:
+                    update_db.close()
         except Exception as e:
             logger.error(f"❌ [Auto-Sync] Classroom failed for {user_email}: {e}")
 
         # 2. Moodle Sync
-        if user.moodle_url and user.moodle_token:
+        if moodle_url and moodle_token:
             try:
-                moodle_service = MoodleSyncService(user.moodle_url, user.moodle_token, user_email)
+                moodle_service = MoodleSyncService(moodle_url, moodle_token, user_email)
                 await moodle_service.sync_all()
-                logger.info(f"✅ [Auto-Sync] Moodle synced for {user_email}")
             except Exception as e:
                 logger.error(f"❌ [Auto-Sync] Moodle failed for {user_email}: {e}")
 
         # 3. Google Drive Sync (Watched Folders)
-        if user.watched_drive_folders:
+        if watched_drive_folders:
             try:
-                folder_ids = json.loads(user.watched_drive_folders)
+                folder_ids = json.loads(watched_drive_folders)
                 if folder_ids:
-                    drive_service = DriveSyncService(user.access_token, user_email, user.refresh_token)
+                    drive_service = DriveSyncService(access_token, user_email, refresh_token)
                     for fid in folder_ids:
                         await drive_service.sync_folder(fid)
-                    logger.info(f"💾 [Auto-Sync] Drive ({len(folder_ids)} folders) synced for {user_email}")
             except Exception as e:
                 logger.error(f"❌ [Auto-Sync] Drive failed for {user_email}: {e}")
 
-        # 4. Gmail Sync (Tests & Announcements)
+        # 4. Gmail Sync
         try:
-            gmail_service = GmailSyncService(user.access_token, user.email, user.refresh_token)
+            gmail_service = GmailSyncService(access_token, user_email, refresh_token)
             await gmail_service.sync_recent_emails()
-            logger.info(f"✅ [Auto-Sync] Gmail synced for {user_email}")
         except Exception as e:
             logger.error(f"❌ [Auto-Sync] Gmail failed for {user_email}: {e}")
 
-        # Update last_synced
-        user.last_synced = datetime.utcnow()
-        db.commit()
-        logger.info(f"💎 [Auto-Sync] Full Cycle Successful for {user_email}")
+        # Final Update
+        last_db = SessionLocal()
+        try:
+            u = last_db.query(User).filter(User.email == user_email).first()
+            if u:
+                u.last_synced = datetime.utcnow()
+                last_db.commit()
+            logger.info(f"💎 [Auto-Sync] Full Cycle Successful for {user_email}")
+        finally:
+            last_db.close()
 
     finally:
-        db.close()
+        try:
+            db.close()
+        except:
+            pass
 
 async def global_sync_loop():
     """Infinite loop that syncs all users periodically."""

@@ -103,6 +103,10 @@ class GmailSyncService:
 
         logger.info(f"Syncing {len(new_messages)} new emails for {self.user_email}")
         stats = {"synced_count": 0}
+        
+        # Extract ID and close session to unblock pool
+        user_id = user.id
+        db.close()
 
         async def process_message(msg):
                 msg_id = msg['id']
@@ -138,7 +142,7 @@ class GmailSyncService:
                     # Save to Local DB
                     new_material = Material(
                         id=msg_id,
-                        user_id=user.id,
+                        user_id=user_id,
                         course_id="GMAIL_INBOX",
                         title=f"Email: {subject}",
                         content=body_content[:2000],
@@ -168,6 +172,7 @@ class GmailSyncService:
                             }
                         )
                         # Log SM usage with the current task_db
+                        from app.intelligence.usage import UsageTracker
                         UsageTracker.log_usage(self.user_email, 500, is_input=True, category="supermemory", db=task_db)
                 except Exception as e:
                     logger.error(f"Error processing message {msg_id}: {e}")
@@ -187,30 +192,24 @@ class GmailSyncService:
             await asyncio.gather(*(process_with_semaphore(m) for m in batch))
             await asyncio.sleep(0.1)
         
-        # Update user last_synced
-        if user:
-            user.last_synced = datetime.datetime.utcnow()
-            db.commit()
-
-        # Restore Pruning logic (Keep only top 25)
+        # Final Pruning Activity (requires new session)
+        final_db = SessionLocal()
         try:
             from sqlalchemy import or_
-            all_emails = db.query(Material).filter(
+            all_emails = final_db.query(Material).filter(
                 Material.course_id == "GMAIL_INBOX",
-                or_(Material.user_id == user.id, Material.user_id == None)
+                or_(Material.user_id == user_id, Material.user_id == None)
             ).order_by(Material.created_at.desc()).all()
             
             if len(all_emails) > 25:
-                logger.info(f"Pruning emails for {self.user_email}. Current count: {len(all_emails)}")
+                # Keep top 25
                 for old_email in all_emails[25:]:
-                    # Purge from DB
-                    db.delete(old_email)
-                db.commit()
-                logger.info(f"Pruning complete. 25 most recent emails kept.")
-        except Exception as e:
-            logger.error(f"Gmail pruning failed: {e}")
+                    final_db.delete(old_email)
+                final_db.commit()
+        except: pass
+        finally:
+            final_db.close()
             
-        db.close()
         return stats["synced_count"]
 
     async def _analyze_email_as_assistant(self, subject, sender, body, db=None):
