@@ -59,7 +59,7 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             # 1. Exchange Authorization Code for Tokens
-            # This is the standard OAuth2 token swap
+            logger.info(f"Attempting token exchange for code: {request.code[:10]}...")
             token_resp = await client.post(
                 "https://oauth2.googleapis.com/token",
                 data={
@@ -68,7 +68,8 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
                     "client_secret": settings.GOOGLE_CLIENT_SECRET,
                     "redirect_uri": "postmessage",
                     "grant_type": "authorization_code",
-                }
+                },
+                timeout=15.0
             )
             
             if not token_resp.is_success:
@@ -78,52 +79,69 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
             tokens = token_resp.json()
             access_token = tokens.get('access_token')
             refresh_token = tokens.get('refresh_token')
+            logger.info("Token exchange successful")
             
             # 2. Get User Profile via direct UserInfo API
-            # This replaces the slow build('oauth2', 'v2') call
             ui_resp = await client.get(
                 "https://www.googleapis.com/oauth2/v2/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"}
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=10.0
             )
             
             if not ui_resp.is_success:
+                logger.error(f"UserInfo fetch failed: {ui_resp.text}")
                 raise HTTPException(status_code=400, detail="Failed to retrieve profile info")
             
             user_info = ui_resp.json()
             email = standardize_email(user_info.get('email'))
             google_id = str(user_info.get('id') or user_info.get('sub'))
+            logger.info(f"Retrieved user info for: {email}")
             
             if not email:
                 raise HTTPException(status_code=400, detail="No email found in Google response")
 
             # 3. Database Management (Fast Lookup)
-            user = db.query(User).filter(User.google_id == google_id).first()
-            if not user:
-                user = db.query(User).filter(User.email == email).first()
-
-            if not user:
-                user = User(
-                    email=email,
-                    google_id=google_id,
-                    access_token=access_token,
-                    refresh_token=refresh_token
-                )
-                db.add(user)
-            else:
-                user.email = email 
-                user.google_id = google_id
-                user.access_token = access_token
-                if refresh_token:
-                    user.refresh_token = refresh_token
+            logger.info(f"Database lookup for user: {email}")
             
-            db.commit()
-            db.refresh(user)
+            def get_or_create_user(db: Session, google_id: str, email: str, access_token: str, refresh_token: str):
+                user = db.query(User).filter(User.google_id == google_id).first()
+                if not user:
+                    user = db.query(User).filter(User.email == email).first()
+
+                if not user:
+                    logger.info(f"Creating new user: {email}")
+                    user = User(
+                        email=email,
+                        google_id=google_id,
+                        access_token=access_token,
+                        refresh_token=refresh_token
+                    )
+                    db.add(user)
+                else:
+                    logger.info(f"Updating existing user: {email}")
+                    user.email = email 
+                    user.google_id = google_id
+                    user.access_token = access_token
+                    if refresh_token:
+                        user.refresh_token = refresh_token
+                
+                try:
+                    db.commit()
+                    db.refresh(user)
+                    return user
+                except Exception as e:
+                    db.rollback()
+                    raise e
+
+            # Offload synchronous DB work to avoid blocking the event loop
+            user = await asyncio.to_thread(get_or_create_user, db, google_id, email, access_token, refresh_token)
+            logger.info(f"User {email} committed to DB")
             
             # 4. Defer Background Tasks — FAST FIRST, DEEP LATER
             async def run_initial_sync():
                 try:
+                    logger.info(f"Starting background sync task for {email}")
                     # Phase 1: Quick classroom metadata (courses list only)
-                    # This makes the dashboard show courses as fast as possible
                     service = LMSSyncService(access_token, email, refresh_token)
                     await service.sync_all_courses()
                     logger.info(f"Phase 1 (classroom meta) done for {email}")
@@ -132,7 +150,7 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
                 
                 try:
                     # Phase 2: Drive + Gmail (deferred, non-blocking)
-                    await asyncio.sleep(5)  # Delay to let UI settle and user interact
+                    await asyncio.sleep(5) 
                     from app.intelligence.scheduler import sync_all_for_user
                     await sync_all_for_user(email)
                     logger.info(f"Phase 2 (full sync) done for {email}")
@@ -140,6 +158,7 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks, db: Se
                     logger.error(f"Phase 2 sync fail for {email}: {e}")
 
             background_tasks.add_task(run_initial_sync)
+            logger.info(f"Returning login success for {email}")
             
             return {
                 "status": "success", 

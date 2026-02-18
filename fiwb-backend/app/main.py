@@ -5,19 +5,13 @@ from app.config import settings
 
 app = FastAPI(title="FIWB AI Backend")
 
-from app.database import engine
-from app.models import Base
-Base.metadata.create_all(bind=engine)
+# from app.database import engine
+# from app.models import Base
+# Moved to on_startup event below
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://app.fiwbai.xyz",
-        "https://app.fiwb.xyz",
-        "https://fiwbai.xyz",
-        "https://fiwb.xyz",
-    ],
+    allow_origins=["*"], # Allow all origins during stabilization phase
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +38,12 @@ from app.intelligence.scheduler import start_scheduler
 
 @app.on_event("startup")
 async def on_startup():
+    try:
+        from app.database import engine
+        from app.models import Base
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Database initialization error: {e}")
     # start_scheduler()  # Manually disabled to end background tasks
     pass
 

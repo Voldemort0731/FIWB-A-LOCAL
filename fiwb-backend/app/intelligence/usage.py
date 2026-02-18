@@ -42,9 +42,12 @@ class UsageTracker:
         user_email = standardize_email(user_email)
         local_db = False
         if db is None:
-            from app.database import SessionLocal
-            db = SessionLocal()
-            local_db = True
+            try:
+                db = SessionLocal()
+                local_db = True
+            except Exception as e:
+                logger.error(f"❌ UsageTracker failed to get DB session: {e}")
+                return
         try:
             user = db.query(User).filter(User.email == user_email).first()
             if not user: return

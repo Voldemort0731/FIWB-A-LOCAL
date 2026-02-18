@@ -127,7 +127,7 @@ class GmailSyncService:
                     # Analyze
                     try:
                         analysis = await asyncio.wait_for(
-                            self._analyze_email_as_assistant(subject, sender, body_content),
+                            self._analyze_email_as_assistant(subject, sender, body_content, db=task_db),
                             timeout=15.0
                         )
                     except:
@@ -165,16 +165,24 @@ class GmailSyncService:
                                 "source_link": f"https://mail.google.com/mail/u/0/#inbox/{msg_id}"
                             }
                         )
+                        # Log SM usage with the current task_db
+                        UsageTracker.log_usage(self.user_email, 500, is_input=True, category="supermemory", db=task_db)
                 except Exception as e:
                     logger.error(f"Error processing message {msg_id}: {e}")
                 finally:
                     task_db.close()
 
-        # Process new messages in batches
-        batch_size = 5
+        # Process new messages in batches with a semaphore to prevent pool exhaustion
+        semaphore = asyncio.Semaphore(3)
+        
+        async def process_with_semaphore(msg):
+            async with semaphore:
+                await process_message(msg)
+
+        batch_size = 10 # Process more at once but limited by semaphore
         for i in range(0, len(new_messages), batch_size):
             batch = new_messages[i:i + batch_size]
-            await asyncio.gather(*(process_message(m) for m in batch))
+            await asyncio.gather(*(process_with_semaphore(m) for m in batch))
             await asyncio.sleep(0.1)
         
         # Cleanup: Keep only top 25 recent emails locally AND in Supermemory
@@ -205,7 +213,7 @@ class GmailSyncService:
         db.close()
         return stats["synced_count"]
 
-    async def _analyze_email_as_assistant(self, subject, sender, body):
+    async def _analyze_email_as_assistant(self, subject, sender, body, db=None):
         """Deep assistant analysis to extract actionable knowledge and context."""
         prompt = f"""
         You are an elite Personal Intelligence Assistant. 
@@ -232,7 +240,7 @@ class GmailSyncService:
         """
         try:
             from app.intelligence.usage import UsageTracker
-            UsageTracker.log_usage(self.user_email, UsageTracker.count_tokens(prompt), is_input=True, category="slm")
+            UsageTracker.log_usage(self.user_email, UsageTracker.count_tokens(prompt), is_input=True, category="slm", db=db)
             
             response = await self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -240,7 +248,7 @@ class GmailSyncService:
                 response_format={"type": "json_object"}
             )
             res_content = response.choices[0].message.content
-            UsageTracker.log_usage(self.user_email, UsageTracker.count_tokens(res_content), is_input=False, category="slm")
+            UsageTracker.log_usage(self.user_email, UsageTracker.count_tokens(res_content), is_input=False, category="slm", db=db)
             return json.loads(res_content)
         except:
             return {"is_relevant": False}
