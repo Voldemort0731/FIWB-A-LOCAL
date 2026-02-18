@@ -18,74 +18,91 @@ class LMSSyncService:
         self.gc_client = GoogleClassroomClient(access_token, refresh_token)
         self.user_email = standardize_email(user_email)
         self.sm_client = SharedClients.get_supermemory()
+        self.access_token = access_token
+        self.refresh_token = refresh_token
 
     async def sync_all_courses(self):
         """
-        PHASE 1 (Fast): Fetch course list, update DB, return immediately.
-        PHASE 2 (Background): Deep content sync, throttled by GlobalSyncManager.
+        PHASE 1 (Fast, ~2s): Fetch course list, update DB, return.
+        PHASE 2 (Background): Deep content sync, fire-and-forget.
         """
         db = SessionLocal()
+        courses_data = []
+        user_id = None
+
         try:
-            logger.info(f"[Sync] Starting Phase 1 for {self.user_email}")
+            logger.info(f"[Sync] Phase 1 starting for {self.user_email}")
             user = db.query(User).filter(User.email == self.user_email).first()
             if not user:
-                logger.error(f"[Sync] User {self.user_email} not found.")
+                logger.error(f"[Sync] User {self.user_email} not found in DB.")
                 return
 
-            # Fetch courses with a timeout to prevent hanging
+            user_id = user.id
+
+            # Fetch courses with timeout
             try:
-                courses_data = await asyncio.wait_for(
-                    self.gc_client.get_courses(),
-                    timeout=20.0
-                )
-                logger.info(f"[Sync] Phase 1: Found {len(courses_data)} courses for {self.user_email}")
+                courses_data = await asyncio.wait_for(self.gc_client.get_courses(), timeout=20.0)
+                logger.info(f"[Sync] Got {len(courses_data)} courses from Google for {self.user_email}")
             except asyncio.TimeoutError:
-                logger.error(f"[Sync] Course fetch timed out for {self.user_email}")
+                logger.error(f"[Sync] Google API timed out for {self.user_email}")
                 return
             except Exception as e:
-                logger.error(f"[Sync] Course fetch failed for {self.user_email}: {e}")
+                logger.error(f"[Sync] Google API error for {self.user_email}: {e}")
                 return
 
-            # Update course metadata in DB
+            # Upsert courses into DB
             active_ids = set()
             for c in courses_data:
                 cid = c['id']
                 active_ids.add(cid)
                 db_course = db.query(Course).filter(Course.id == cid).first()
                 if not db_course:
-                    db_course = Course(id=cid, name=c['name'], professor="Loading...", platform="Google Classroom")
+                    db_course = Course(
+                        id=cid,
+                        name=c['name'],
+                        professor="Loading...",
+                        platform="Google Classroom"
+                    )
                     db.add(db_course)
                 else:
                     db_course.name = c['name']
+
                 if db_course not in user.courses:
                     user.courses.append(db_course)
                 db_course.last_synced = datetime.utcnow()
 
-            # Safety: only prune if we got a real list back
+            # Safety: only prune if API returned real data
             existing_gc = [c for c in user.courses if c.platform == "Google Classroom"]
             if len(courses_data) == 0 and len(existing_gc) > 0:
                 logger.warning(f"[Sync] API returned 0 courses but user had {len(existing_gc)}. Skipping cleanup.")
             else:
                 for uc in list(user.courses):
                     if uc.platform == "Google Classroom" and uc.id not in active_ids:
+                        logger.info(f"[Sync] Removing unenrolled course: {uc.name}")
                         user.courses.remove(uc)
 
             db.commit()
-            user_id = user.id
-            logger.info(f"[Sync] Phase 1 COMPLETE for {self.user_email} — {len(courses_data)} courses visible")
+            logger.info(f"[Sync] Phase 1 DONE for {self.user_email} — {len(courses_data)} courses in DB")
 
         except Exception as e:
             logger.error(f"[Sync] Phase 1 failed for {self.user_email}: {e}")
             traceback.print_exc()
-            try: db.rollback()
-            except: pass
+            try:
+                db.rollback()
+            except:
+                pass
             return
         finally:
-            # CRITICAL: Always release the DB connection before Phase 2
-            try: db.close()
-            except: pass
+            # ALWAYS release DB before Phase 2
+            try:
+                db.close()
+            except:
+                pass
 
-        # PHASE 2: Fire and forget deep sync (throttled globally)
+        if not courses_data or not user_id:
+            return
+
+        # PHASE 2: Fire and forget — throttled by GlobalSyncManager
         from app.utils.concurrency import GlobalSyncManager
 
         async def deep_sync():
@@ -97,12 +114,14 @@ class LMSSyncService:
                         cid = course_data['id']
                         cname = course_data['name']
 
-                        # Get professor name
+                        # Get professor name (best effort, short timeout)
                         professor = "Unknown Professor"
                         try:
                             service = await self.gc_client._get_service()
                             tr = await asyncio.wait_for(
-                                asyncio.to_thread(lambda: service.courses().teachers().list(courseId=cid).execute()),
+                                asyncio.to_thread(
+                                    lambda: service.courses().teachers().list(courseId=cid).execute()
+                                ),
                                 timeout=5.0
                             )
                             teachers = tr.get('teachers', [])
@@ -116,77 +135,99 @@ class LMSSyncService:
                             pass
 
                         await self._sync_course_content(task_db, cid, cname, professor, user_id)
+
                     except Exception as e:
-                        logger.error(f"[Sync] Phase 2 error for {course_data.get('name')}: {e}")
+                        logger.error(f"[Sync] Phase 2 error [{course_data.get('name')}]: {e}")
                     finally:
-                        try: task_db.close()
-                        except: pass
-                        await asyncio.sleep(0.3)
+                        try:
+                            task_db.close()
+                        except:
+                            pass
+                        await asyncio.sleep(0.5)  # Gentle gap between courses
 
                 logger.info(f"[Sync] Phase 2 COMPLETE for {self.user_email}")
 
         asyncio.create_task(deep_sync())
 
     async def _sync_course_content(self, db, course_id: str, course_name: str, professor: str, user_id: int):
-        """Sync a single course's content. Uses local DB as source of truth for dedup."""
+        """Sync all content for a single course. Uses local DB for dedup (no Supermemory round-trip)."""
         try:
-            # Build local dedup set (fast DB query, no Supermemory round-trip)
+            # Fast local dedup — one SQL query, no network call
             existing_local_ids = set(
                 row[0] for row in db.query(Material.id).filter(Material.course_id == course_id).all()
             )
 
-            # Fetch all content types in parallel
-            coursework, materials_list, announcements = await asyncio.gather(
+            # Fetch all content types in parallel with individual error handling
+            results = await asyncio.gather(
                 self.gc_client.get_coursework(course_id),
                 self.gc_client.get_materials(course_id),
                 self.gc_client.get_announcements(course_id),
                 return_exceptions=True
             )
-            if isinstance(coursework, Exception): coursework = []
-            if isinstance(materials_list, Exception): materials_list = []
-            if isinstance(announcements, Exception): announcements = []
 
-            new_items = []
+            coursework = results[0] if not isinstance(results[0], Exception) else []
+            materials_list = results[1] if not isinstance(results[1], Exception) else []
+            announcements = results[2] if not isinstance(results[2], Exception) else []
 
-            # Process Assignments
+            new_materials = []
+
+            # --- Assignments ---
             for work in coursework:
                 item_id = work.get('id')
                 if not item_id or item_id in existing_local_ids:
                     continue
                 title = work.get('title', 'Assignment')
-                desc = work.get('description', '')[:500]
+                desc = work.get('description', '')[:1000]
                 due = self._format_date(work.get('dueDate'))
                 content, attachments = self._format_rich_item(work, due, "Assignment")
-                new_items.append(Material(
-                    id=item_id, user_id=user_id, course_id=course_id,
-                    title=title, content=desc, type="assignment",
-                    due_date=due, created_at=work.get('creationTime'),
+
+                new_materials.append(Material(
+                    id=item_id,
+                    user_id=user_id,
+                    course_id=course_id,
+                    title=title,
+                    content=desc,
+                    type="assignment",
+                    due_date=due,
+                    created_at=work.get('creationTime'),
                     attachments=json.dumps(attachments),
                     source_link=work.get('alternateLink')
                 ))
                 existing_local_ids.add(item_id)
-                # Index to Supermemory in background
-                asyncio.create_task(self._index_to_supermemory(content, title, desc, item_id, course_id, course_name, professor, "assignment", work.get('alternateLink')))
 
-            # Process Materials
+                # Index to Supermemory in background (never blocks sync)
+                asyncio.create_task(self._index_item(
+                    content, title, desc, item_id, course_id, course_name, professor, "assignment", work.get('alternateLink')
+                ))
+
+            # --- Materials ---
             for mat in materials_list:
                 item_id = mat.get('id')
                 if not item_id or item_id in existing_local_ids:
                     continue
                 title = mat.get('title', 'Material')
-                desc = mat.get('description', '')[:500]
+                desc = mat.get('description', '')[:1000]
                 content, attachments = self._format_rich_item(mat, None, "Course Material")
-                new_items.append(Material(
-                    id=item_id, user_id=user_id, course_id=course_id,
-                    title=title, content=desc, type="material",
-                    due_date=None, created_at=mat.get('creationTime'),
+
+                new_materials.append(Material(
+                    id=item_id,
+                    user_id=user_id,
+                    course_id=course_id,
+                    title=title,
+                    content=desc,
+                    type="material",
+                    due_date=None,
+                    created_at=mat.get('creationTime'),
                     attachments=json.dumps(attachments),
                     source_link=mat.get('alternateLink')
                 ))
                 existing_local_ids.add(item_id)
-                asyncio.create_task(self._index_to_supermemory(content, title, desc, item_id, course_id, course_name, professor, "material", mat.get('alternateLink')))
 
-            # Process Announcements
+                asyncio.create_task(self._index_item(
+                    content, title, desc, item_id, course_id, course_name, professor, "material", mat.get('alternateLink')
+                ))
+
+            # --- Announcements ---
             for ann in announcements:
                 item_id = ann.get('id')
                 if not item_id or item_id in existing_local_ids:
@@ -195,31 +236,46 @@ class LMSSyncService:
                 if not text:
                     continue
                 title = f"Announcement: {course_name}"
-                desc = text[:500]
+                desc = text[:1000]
                 content = f"Announcement from {professor} in {course_name}:\n{text}"
-                new_items.append(Material(
-                    id=item_id, user_id=user_id, course_id=course_id,
-                    title=title, content=desc, type="announcement",
-                    due_date=None, created_at=ann.get('creationTime'),
+
+                new_materials.append(Material(
+                    id=item_id,
+                    user_id=user_id,
+                    course_id=course_id,
+                    title=title,
+                    content=desc,
+                    type="announcement",
+                    due_date=None,
+                    created_at=ann.get('creationTime'),
                     attachments=json.dumps([]),
                     source_link=ann.get('alternateLink')
                 ))
                 existing_local_ids.add(item_id)
-                asyncio.create_task(self._index_to_supermemory(content, title, desc, item_id, course_id, course_name, professor, "announcement", ann.get('alternateLink')))
 
-            # Bulk insert all new items
-            if new_items:
-                db.bulk_save_objects(new_items)
+                asyncio.create_task(self._index_item(
+                    content, title, desc, item_id, course_id, course_name, professor, "announcement", ann.get('alternateLink')
+                ))
+
+            # Bulk insert all new items in one transaction
+            if new_materials:
+                for m in new_materials:
+                    db.add(m)
                 db.commit()
-                logger.info(f"[Sync] Saved {len(new_items)} new items for course {course_name}")
+                logger.info(f"[Sync] Saved {len(new_materials)} new items for '{course_name}'")
+            else:
+                logger.info(f"[Sync] No new items for '{course_name}' (already up to date)")
 
         except Exception as e:
             logger.error(f"[Sync] Content sync error for {course_id}: {e}")
-            try: db.rollback()
-            except: pass
+            traceback.print_exc()
+            try:
+                db.rollback()
+            except:
+                pass
 
-    async def _index_to_supermemory(self, content, title, desc, item_id, course_id, course_name, professor, item_type, source_link):
-        """Fire-and-forget Supermemory indexing. Never blocks the main sync."""
+    async def _index_item(self, content, title, desc, item_id, course_id, course_name, professor, item_type, source_link):
+        """Fire-and-forget Supermemory indexing. Errors here never affect the main sync."""
         try:
             metadata = {
                 "user_id": self.user_email,
@@ -236,7 +292,8 @@ class LMSSyncService:
             logger.warning(f"[Sync] Supermemory index failed for {item_id}: {e}")
 
     def _format_date(self, date_dict: dict) -> str:
-        if not date_dict: return None
+        if not date_dict:
+            return None
         try:
             return f"{date_dict.get('year')}-{date_dict.get('month'):02d}-{date_dict.get('day'):02d}"
         except:
@@ -264,16 +321,25 @@ class LMSSyncService:
                 title = df.get('title', 'Drive File')
                 link = df.get('alternateLink', '')
                 mime = df.get('mimeType', '')
-                ftype = 'pdf' if 'pdf' in mime else 'document' if 'document' in mime else 'file'
+                fid = df.get('id', '')
+                thumb = df.get('thumbnailUrl', '')
+                ftype = 'pdf' if 'pdf' in mime else 'document' if 'document' in mime else 'presentation' if 'presentation' in mime else 'spreadsheet' if 'spreadsheet' in mime else 'file'
                 lines.append(f"- [Drive] {title}: {link}")
-                attachments.append({"type": "drive", "file_type": ftype, "title": title, "url": link, "file_id": df.get('id', ''), "mime_type": mime})
+                attachments.append({
+                    "type": "drive", "file_type": ftype, "title": title,
+                    "url": link, "file_id": fid, "thumbnail": thumb, "mime_type": mime
+                })
             elif 'youtubeVideo' in m:
                 yt = m['youtubeVideo']
                 title = yt.get('title', 'Video')
                 link = yt.get('alternateLink', '')
                 vid = yt.get('id', '')
                 lines.append(f"- [Video] {title}: {link}")
-                attachments.append({"type": "video", "file_type": "youtube", "title": title, "url": link, "video_id": vid, "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg"})
+                attachments.append({
+                    "type": "video", "file_type": "youtube", "title": title,
+                    "url": link, "video_id": vid,
+                    "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg" if vid else ''
+                })
             elif 'link' in m:
                 l = m['link']
                 title = l.get('title', 'Link')

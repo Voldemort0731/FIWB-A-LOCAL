@@ -1,116 +1,110 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db, SessionLocal
-from app.models import User, Course, user_courses
-from app.lms.sync_service import LMSSyncService
+from app.models import User, Course, Material
 from sqlalchemy import delete
 import asyncio
+import logging
 
 from app.config import settings
+from app.utils.email import standardize_email
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 def verify_admin(admin_email: str):
     if admin_email != settings.OWNER_EMAIL:
-        raise HTTPException(status_code=403, detail="Unauthorized access to analytics")
+        raise HTTPException(status_code=403, detail="Unauthorized")
     return admin_email
 
 @router.get("/users")
 def get_users(admin_email: str, db: Session = Depends(get_db)):
-    """List all users."""
     verify_admin(admin_email)
-    return db.query(User).all()
+    users = db.query(User).all()
+    return [{"id": u.id, "email": u.email, "last_synced": u.last_synced} for u in users]
 
 @router.get("/courses")
 def get_all_courses(admin_email: str, db: Session = Depends(get_db)):
-    """List all courses."""
     verify_admin(admin_email)
     return db.query(Course).all()
 
-async def sync_task(user_email: str):
-    from app.intelligence.scheduler import sync_all_for_user
-    await sync_all_for_user(user_email)
+async def _run_full_sync(user_email: str):
+    """Background sync task that uses the stored token from DB."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == user_email).first()
+        if not user or not user.access_token:
+            logger.error(f"[Admin Sync] No token for {user_email}")
+            return
+        access_token = user.access_token
+        refresh_token = user.refresh_token
+    finally:
+        db.close()
+
+    # 1. Classroom sync
+    try:
+        from app.lms.sync_service import LMSSyncService
+        svc = LMSSyncService(access_token, user_email, refresh_token)
+        await svc.sync_all_courses()
+        logger.info(f"[Admin Sync] Classroom sync triggered for {user_email}")
+    except Exception as e:
+        logger.error(f"[Admin Sync] Classroom failed for {user_email}: {e}")
+
+    # 2. Gmail sync (after short delay)
+    await asyncio.sleep(2)
+    try:
+        from app.lms.gmail_service import GmailSyncService
+        gmail = GmailSyncService(access_token, user_email, refresh_token)
+        await gmail.sync_recent_emails()
+        logger.info(f"[Admin Sync] Gmail sync done for {user_email}")
+    except Exception as e:
+        logger.error(f"[Admin Sync] Gmail failed for {user_email}: {e}")
 
 @router.post("/sync/{user_email}")
-def trigger_sync(user_email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Manually trigger sync for a user using stored token."""
-    from app.utils.email import standardize_email
+async def trigger_sync(user_email: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Manually trigger a full sync for a user using their stored token."""
     email = standardize_email(user_email)
-    
     user = db.query(User).filter(User.email == email).first()
-    if not user or not user.access_token:
-        raise HTTPException(status_code=404, detail="User or token not found")
-    
-    background_tasks.add_task(sync_task, user.email)
-    return {"status": "Sync started in background"}
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.access_token:
+        raise HTTPException(status_code=400, detail="No access token stored for user. Please log in again.")
+
+    background_tasks.add_task(_run_full_sync, email)
+    return {"status": "sync_started", "user": email}
 
 @router.post("/cleanup/{user_email}")
 async def cleanup_user_data(user_email: str, db: Session = Depends(get_db)):
-    """Remove all mock data and optionally clear specific user links."""
+    """Remove all mock data for a user."""
     user = db.query(User).filter(User.email == user_email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Identify mock courses linked to this user
-    mock_courses_list = [c for c in user.courses if c.id.startswith("mock")]
-    
-    for course in mock_courses_list:
-        # Remove link
+
+    mock_courses = [c for c in user.courses if c.id.startswith("mock")]
+    for course in mock_courses:
         user.courses.remove(course)
-        
-        # If no other users are linked to this mock course, delete it
         if len(course.users) == 0:
             db.delete(course)
-    
-    db.commit()
-    return {"status": f"Cleaned up {len(mock_courses_list)} mock courses for {user_email}"}
 
-@router.post("/mock-sync/{user_email}")
-async def trigger_mock_sync(user_email: str, db: Session = Depends(get_db)):
-    """Generate mock courses and materials for testing."""
-    user = db.query(User).filter(User.email == user_email).first()
-    if not user:
-        user = User(email=user_email, google_id=f"mock_{user_email}")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    
-    from app.supermemory.client import SupermemoryClient
-    sm_client = SupermemoryClient()
-    
-    mock_courses = [
-        {"id": "mock1", "name": "Artificial Intelligence", "professor": "Dr. Alan Turing", "platform": "Google Classroom"},
-        {"id": "mock2", "name": "Computer Networks", "professor": "Dr. Vint Cerf", "platform": "Google Classroom"},
-        {"id": "mock3", "name": "Operating Systems", "professor": "Dr. Linus Torvalds", "platform": "Google Classroom"},
-    ]
-    
-    for c in mock_courses:
-        db_course = db.query(Course).filter(Course.id == c['id']).first()
-        if not db_course:
-            db_course = Course(**c)
-            db.add(db_course)
-        else:
-            db_course.name = c['name']
-            db_course.professor = c['professor']
-        
-        if db_course not in user.courses:
-            user.courses.append(db_course)
-            
-        materials = [
-            {"title": f"Syllabus - {c['name']}", "type": "material", "content": f"Introduction to {c['name']}."},
-            {"title": f"Assignment 1", "type": "assignment", "content": "Basic problems."},
-            {"title": "Lecture Notes", "type": "material", "content": "Week 1 notes."}
-        ]
-        
-        for m in materials:
-            meta = {
-                "user_id": user_email,
-                "course_id": c['id'],
-                "course_name": c['name'],
-                "type": m['type'],
-                "source": "Mock Sync"
-            }
-            await sm_client.add_document(m['content'], meta, title=m['title'])
-    
     db.commit()
-    return {"status": "Mock environment initialized"}
+    return {"status": f"Cleaned up {len(mock_courses)} mock courses for {user_email}"}
+
+@router.get("/status/{user_email}")
+def get_sync_status(user_email: str, db: Session = Depends(get_db)):
+    """Get sync status and material counts for a user."""
+    email = standardize_email(user_email)
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    material_count = db.query(Material).filter(Material.user_id == user.id).count()
+    course_count = len(user.courses)
+
+    return {
+        "email": user.email,
+        "last_synced": user.last_synced,
+        "courses": course_count,
+        "materials": material_count,
+        "has_token": bool(user.access_token),
+        "has_refresh_token": bool(user.refresh_token)
+    }
