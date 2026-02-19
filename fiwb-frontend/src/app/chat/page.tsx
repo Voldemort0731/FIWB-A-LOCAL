@@ -17,6 +17,7 @@ interface Source {
     display?: string;
     link?: string;
     source_link?: string;
+    url?: string;
     snippet?: string;
     source_type?: string;
 }
@@ -213,29 +214,31 @@ function MessageContent({ content, sources = [], onOpenDocument }: MessageConten
 
 
                                         <div className="mt-auto pt-3 border-t border-gray-100 dark:border-white/5 flex items-center justify-between">
-                                            {link ? (
+                                            {displayTitle ? (
                                                 <div className="flex items-center gap-2">
                                                     <button
-                                                        onClick={() => onOpenDocument?.(link, displayTitle)}
+                                                        onClick={() => onOpenDocument?.(link || "", displayTitle)}
                                                         className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20 active:scale-95"
                                                     >
                                                         <Zap size={10} />
                                                         Open in Vault
                                                     </button>
-                                                    <a
-                                                        href={link}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg text-gray-400 hover:text-blue-500 transition-colors"
-                                                        title="Open in new tab"
-                                                    >
-                                                        <RefreshCw size={12} />
-                                                    </a>
+                                                    {link && (
+                                                        <a
+                                                            href={link}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg text-gray-400 hover:text-blue-500 transition-colors"
+                                                            title="Open in new tab"
+                                                        >
+                                                            <RefreshCw size={12} />
+                                                        </a>
+                                                    )}
                                                 </div>
                                             ) : (
-                                                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 dark:bg-white/5 text-gray-500 rounded-xl text-[10px] font-black uppercase tracking-wider opacity-60">
+                                                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 dark:border-white/5 text-gray-500 rounded-xl text-[10px] font-black uppercase tracking-wider opacity-60">
                                                     <Settings size={10} />
-                                                    Legacy Asset
+                                                    Citation Only
                                                 </div>
                                             )}
                                             <div className="flex items-center -space-x-1">
