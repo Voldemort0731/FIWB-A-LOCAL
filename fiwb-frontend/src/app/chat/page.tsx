@@ -70,7 +70,7 @@ function MessageContent({ content, sources = [], onOpenDocument }: MessageConten
         ...docCitations.map(d => d.baseTitle),
         ...legacySources,
         ...retrievedTitles
-    ])).filter(s => s && s.toLowerCase() !== "none");
+    ])).filter(s => s && s.trim().length > 0 && s.toLowerCase() !== "none");
 
     // Normalize LaTeX delimiters for better rendering
     let finalDisplayContent = markdownContent
@@ -976,7 +976,7 @@ function ChatBody() {
                                     </div>
                                     <div className="flex flex-col">
                                         <span className="text-[9px] font-black uppercase tracking-widest text-blue-500/70">Document Workspace</span>
-                                        <h3 className="text-sm font-black truncate max-w-[200px] sm:max-w-[400px]">{activeDocumentTitle}</h3>
+                                        <h3 className="text-sm font-black truncate max-w-[200px] sm:max-w-[400px]">{activeDocumentTitle || "Neural Memory"}</h3>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
