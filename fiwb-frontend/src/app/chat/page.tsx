@@ -255,6 +255,7 @@ function ChatBody() {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textInputRef = useRef<HTMLInputElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const searchParams = useSearchParams();
 
@@ -383,6 +384,29 @@ function ChatBody() {
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [activeDocumentUrl, setActiveDocumentUrl] = useState<string | null>(null);
     const [activeDocumentTitle, setActiveDocumentTitle] = useState<string | null>(null);
+    const [activeDocumentContent, setActiveDocumentContent] = useState<string | null>(null);
+    const [isOriginalView, setIsOriginalView] = useState(false);
+    const [isLoadingDoc, setIsLoadingDoc] = useState(false);
+
+    const handleOpenDocument = async (url: string, title: string) => {
+        setActiveDocumentUrl(url);
+        setActiveDocumentTitle(title);
+        setIsOriginalView(false); // Default to AI Reader view
+        setIsLoadingDoc(true);
+        setActiveDocumentContent(null);
+
+        try {
+            const email = standardize_email(localStorage.getItem("user_email") || "");
+            const res = await fetch(`${API_URL}/api/search/content?title=${encodeURIComponent(title)}&user_email=${email}`);
+            const data = await res.json();
+            setActiveDocumentContent(data.content);
+        } catch (e) {
+            console.error("Failed to fetch doc content", e);
+            setActiveDocumentContent("System Error: Could not synchronize with vault data. Try Original Source View.");
+        } finally {
+            setIsLoadingDoc(false);
+        }
+    };
 
     // Track if user has scrolled up
     const handleScroll = (e: any) => {
@@ -413,7 +437,7 @@ function ChatBody() {
         if (rect.width > 0 && rect.height > 0) {
             setSelectionPopup({
                 x: rect.left + (rect.width / 2) - 60, // Center (approx 120px width)
-                y: rect.top - 50, // Position above the selection
+                y: Math.max(10, rect.top - 60), // Position above the selection, with safely buffer
                 text: selection.toString()
             });
         }
@@ -772,10 +796,7 @@ function ChatBody() {
                                                 <MessageContent
                                                     content={msg.content}
                                                     sources={msg.sources}
-                                                    onOpenDocument={(url, title) => {
-                                                        setActiveDocumentUrl(url);
-                                                        setActiveDocumentTitle(title);
-                                                    }}
+                                                    onOpenDocument={handleOpenDocument}
                                                 />
                                             )}
                                         </div>
@@ -852,9 +873,9 @@ function ChatBody() {
                                         onMouseDown={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            setInput(`Explain this: "${selectionPopup.text}"`);
+                                            setInput(`Explain this segment: "${selectionPopup.text}"`);
                                             setSelectionPopup(null);
-                                            setTimeout(() => fileInputRef.current?.focus(), 50);
+                                            setTimeout(() => textInputRef.current?.focus(), 100);
                                         }}
                                         className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-full text-xs font-bold shadow-sm hover:bg-blue-500 transition-all whitespace-nowrap"
                                     >
@@ -938,6 +959,7 @@ function ChatBody() {
                                     </button>
                                     <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
                                     <input
+                                        ref={textInputRef}
                                         type="text" className="flex-1 bg-transparent border-none focus:outline-none text-gray-900 dark:text-white placeholder-gray-600 dark:placeholder-gray-600 font-bold py-3 text-sm px-2"
                                         placeholder="Execute academic query..." value={input}
                                         onChange={(e) => setInput(e.target.value)}
@@ -978,6 +1000,20 @@ function ChatBody() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setIsOriginalView(!isOriginalView)}
+                                        className={clsx(
+                                            "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                                            isOriginalView
+                                                ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
+                                                : "bg-gray-100 dark:bg-white/5 text-gray-400 hover:text-blue-500"
+                                        )}
+                                        title={isOriginalView ? "Switch to AI Reader" : "Switch to Original Source"}
+                                    >
+                                        {isOriginalView ? <Zap size={10} /> : <BookOpen size={10} />}
+                                        {isOriginalView ? "Original" : "Neural"}
+                                    </button>
+                                    <div className="w-[1px] h-4 bg-gray-200 dark:bg-white/10 mx-1" />
                                     <a
                                         href={activeDocumentUrl}
                                         target="_blank"
@@ -988,7 +1024,7 @@ function ChatBody() {
                                         <RefreshCw size={20} />
                                     </a>
                                     <button
-                                        onClick={() => setActiveDocumentUrl(null)}
+                                        onClick={() => { setActiveDocumentUrl(null); setActiveDocumentContent(null); }}
                                         className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/5 rounded-xl transition-all"
                                         title="Close Workspace"
                                     >
@@ -996,12 +1032,48 @@ function ChatBody() {
                                     </button>
                                 </div>
                             </div>
-                            <div className="flex-1 w-full relative bg-white overflow-hidden">
-                                <iframe
-                                    src={activeDocumentUrl}
-                                    className="w-full h-full border-none"
-                                    title="Institutional Document Viewer"
-                                />
+                            <div className="flex-1 w-full relative bg-white dark:bg-[#050505] overflow-y-auto scrollbar-premium" onMouseUp={handleSelection}>
+                                {isOriginalView ? (
+                                    <iframe
+                                        src={activeDocumentUrl}
+                                        className="w-full h-full border-none"
+                                        title="Institutional Document Viewer"
+                                    />
+                                ) : (
+                                    <div className="p-8 sm:p-12 max-w-4xl mx-auto">
+                                        {isLoadingDoc ? (
+                                            <div className="flex flex-col items-center justify-center min-h-[400px] space-y-6">
+                                                <div className="w-16 h-16 rounded-3xl bg-blue-500/5 flex items-center justify-center border border-blue-500/10 shadow-inner">
+                                                    <RefreshCw size={24} className="text-blue-500 animate-spin" />
+                                                </div>
+                                                <div className="text-center space-y-2">
+                                                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-500/50 block">Neural Decryption</span>
+                                                    <p className="text-sm font-bold text-gray-400">Syncing with Digital Twin's Vault...</p>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="markdown-content prose dark:prose-invert prose-blue max-w-none animate-in fade-in slide-in-from-bottom-4 duration-700">
+                                                <ReactMarkdown
+                                                    remarkPlugins={[remarkGfm, remarkMath]}
+                                                    rehypePlugins={[rehypeKatex]}
+                                                    components={{
+                                                        p: ({ children }) => <p className="mb-6 leading-relaxed text-gray-800 dark:text-gray-200 font-medium text-base">{children}</p>,
+                                                        h1: ({ children }) => <h1 className="text-3xl font-black mb-8 text-gray-900 dark:text-white border-b border-gray-100 dark:border-white/5 pb-4">{children}</h1>,
+                                                        h2: ({ children }) => <h2 className="text-2xl font-black mb-6 mt-12 text-gray-900 dark:text-white flex items-center gap-3">
+                                                            <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
+                                                            {children}
+                                                        </h2>,
+                                                        code: ({ node, ...props }: any) => (
+                                                            <code className="bg-blue-500/5 dark:bg-white/5 px-2 py-1 rounded text-blue-600 dark:text-blue-400 text-sm font-mono" {...props} />
+                                                        ),
+                                                    }}
+                                                >
+                                                    {activeDocumentContent || "Neural Link Error: No context found in this memory sector."}
+                                                </ReactMarkdown>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 {/* Glass Overlay for smoothness */}
                                 <div className="absolute inset-0 pointer-events-none border border-black/5 dark:border-white/5 rounded-none" />
                             </div>
