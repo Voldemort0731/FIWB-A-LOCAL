@@ -182,7 +182,7 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
                                             {displayTitle}
                                         </h4>
 
-                                        {snippet && (
+                                        {snippet && !['enhanced_memory', 'assistant_knowledge', 'user_profile'].includes(matchedSource?.source_type || '') && (
                                             <div className="mb-4">
                                                 <button
                                                     onClick={() => setExpandedSnippet(expandedSnippet === idx ? null : idx)}
@@ -779,6 +779,32 @@ function ChatBody() {
                             ))}
                         </div>
                     )}
+
+                    {/* Standalone Thinking indicator (Pre-stream phase) */}
+                    <AnimatePresence>
+                        {thinkingStep && !messages.some(m => m.role === 'assistant' && (m.isThinking || m.content)) && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                className="flex flex-col items-start max-w-[90%] lg:max-w-[80%] space-y-4 mb-4 mt-8"
+                            >
+                                <div className="glass-dark border border-blue-500/20 rounded-[1.5rem] px-8 py-6 shadow-2xl bg-white dark:bg-black/40 relative overflow-hidden group">
+                                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 animate-pulse" />
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
+                                            <RefreshCw size={18} className="text-blue-500 animate-spin" />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-blue-500 font-black text-[10px] uppercase tracking-[0.2em] mb-1">Process Active</span>
+                                            <span className="text-gray-900 dark:text-white font-bold text-sm tracking-tight">{thinkingStep}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
                     <div ref={messagesEndRef} />
 
                     {/* Selection Popup */}
