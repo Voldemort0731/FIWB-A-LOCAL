@@ -993,7 +993,7 @@ function ChatBody() {
                 </main>
 
                 <AnimatePresence>
-                    {activeDocumentUrl && (
+                    {activeDocumentTitle && (
                         <motion.div
                             initial={{ x: '100%', opacity: 0 }}
                             animate={{ x: 0, opacity: 1 }}
@@ -1012,31 +1012,35 @@ function ChatBody() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                    {activeDocumentUrl && (
+                                        <>
+                                            <button
+                                                onClick={() => setIsOriginalView(!isOriginalView)}
+                                                className={clsx(
+                                                    "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                                                    isOriginalView
+                                                        ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
+                                                        : "bg-gray-100 dark:bg-white/5 text-gray-400 hover:text-blue-500"
+                                                )}
+                                                title={isOriginalView ? "Switch to AI Reader" : "Switch to Original Source"}
+                                            >
+                                                {isOriginalView ? <Zap size={10} /> : <BookOpen size={10} />}
+                                                {isOriginalView ? "Original" : "Neural"}
+                                            </button>
+                                            <div className="w-[1px] h-4 bg-gray-200 dark:bg-white/10 mx-1" />
+                                            <a
+                                                href={activeDocumentUrl || undefined}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/5 rounded-xl transition-all"
+                                                title="Open in Full Window"
+                                            >
+                                                <RefreshCw size={20} />
+                                            </a>
+                                        </>
+                                    )}
                                     <button
-                                        onClick={() => setIsOriginalView(!isOriginalView)}
-                                        className={clsx(
-                                            "flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                                            isOriginalView
-                                                ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
-                                                : "bg-gray-100 dark:bg-white/5 text-gray-400 hover:text-blue-500"
-                                        )}
-                                        title={isOriginalView ? "Switch to AI Reader" : "Switch to Original Source"}
-                                    >
-                                        {isOriginalView ? <Zap size={10} /> : <BookOpen size={10} />}
-                                        {isOriginalView ? "Original" : "Neural"}
-                                    </button>
-                                    <div className="w-[1px] h-4 bg-gray-200 dark:bg-white/10 mx-1" />
-                                    <a
-                                        href={activeDocumentUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/5 rounded-xl transition-all"
-                                        title="Open in Full Window"
-                                    >
-                                        <RefreshCw size={20} />
-                                    </a>
-                                    <button
-                                        onClick={() => { setActiveDocumentUrl(null); setActiveDocumentContent(null); }}
+                                        onClick={() => { setActiveDocumentUrl(null); setActiveDocumentTitle(null); setActiveDocumentContent(null); }}
                                         className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/5 rounded-xl transition-all"
                                         title="Close Workspace"
                                     >
@@ -1047,7 +1051,7 @@ function ChatBody() {
                             <div className="flex-1 w-full relative bg-white dark:bg-[#050505] overflow-y-auto scrollbar-premium" onMouseUp={handleSelection}>
                                 {isOriginalView ? (
                                     <iframe
-                                        src={activeDocumentUrl}
+                                        src={activeDocumentUrl || undefined}
                                         className="w-full h-full border-none"
                                         title="Institutional Document Viewer"
                                     />
