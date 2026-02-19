@@ -152,14 +152,18 @@ function MessageContent({ content, sources = [], onOpenDocument }: MessageConten
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
                         {allBaseSources.map((baseTitle, idx) => {
-                            const matchedSource = sources.find(s =>
-                                s.title.toLowerCase() === baseTitle.toLowerCase() ||
-                                baseTitle.toLowerCase().includes(s.title.toLowerCase()) ||
-                                s.title.toLowerCase().includes(baseTitle.toLowerCase())
-                            );
+                            // Enhanced Fuzzy Matcher: Handles prefixes, courses, and partial titles
+                            const matchedSource = sources.find(s => {
+                                const sTitle = s.title.toLowerCase();
+                                const bTitle = baseTitle.toLowerCase();
+                                return sTitle === bTitle ||
+                                    sTitle.includes(bTitle) ||
+                                    bTitle.includes(sTitle) ||
+                                    sTitle.replace(/\[.*?\]/g, '').trim() === bTitle.replace(/\[.*?\]/g, '').trim();
+                            });
                             const citation = docCitations.find(d => d.baseTitle.toLowerCase() === baseTitle.toLowerCase());
                             const displayTitle = matchedSource?.display || matchedSource?.title || baseTitle;
-                            const link = matchedSource?.link || matchedSource?.source_link;
+                            const link = matchedSource?.link || matchedSource?.source_link || matchedSource?.url;
                             const pages = citation?.pages;
                             const snippet = matchedSource?.snippet;
 
@@ -197,7 +201,7 @@ function MessageContent({ content, sources = [], onOpenDocument }: MessageConten
                                                 }}
                                                 className="block group/title text-left w-full"
                                             >
-                                                <h4 className="text-[12px] font-black text-gray-900 dark:text-gray-100 line-clamp-2 mb-3 leading-tight group-hover/title:text-blue-600 dark:group-hover/title:text-blue-400 transition-colors">
+                                                <h4 className="text-[12px] font-black text-gray-900 dark:text-gray-100 line-clamp-2 mb-3 leading-tight group-hover/title:text-blue-600 dark:group-hover/title:text-blue-400 group-hover/title:underline transition-colors">
                                                     {displayTitle}
                                                 </h4>
                                             </button>
@@ -216,7 +220,7 @@ function MessageContent({ content, sources = [], onOpenDocument }: MessageConten
                                                         className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20 active:scale-95"
                                                     >
                                                         <Zap size={10} />
-                                                        Focus View
+                                                        Open in Vault
                                                     </button>
                                                     <a
                                                         href={link}
