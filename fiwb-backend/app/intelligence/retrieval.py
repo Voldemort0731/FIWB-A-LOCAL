@@ -23,11 +23,12 @@ class RetrievalOrchestrator:
         history_str = "\n".join([f"{m['role']}: {m['content'][:300]}" for m in history[-5:]])
         
         prompt = f"""Review the conversation history and the follow-up question below. 
-Rewrite the question into a highly descriptive, standalone search query. 
+Rewrite the question into a highly focused, standalone search query. 
 Rules:
-1. Preserve specific keywords, product names, or proper nouns.
-2. Include the subject mentioned in history (e.g., if we're talking about 'Calculus', include 'Calculus' in the query).
-3. If the question is a greeting or meta-question, return the original.
+1. Preserve specific keywords, product names, or core technical terms.
+2. Only include context from history if it is DIRECTLY RELEVANT to the new question.
+3. If the user is SWITCHING topics (e.g., from 'Doubly' to 'Singly'), discard the old topic in the search query.
+4. If the question is a greeting or meta-question, return the original.
 
 **HISTORY:**
 {history_str}
