@@ -128,7 +128,14 @@ class DriveSyncService:
                             content=content,
                             title=file['name'],
                             description=f"File from Google Drive",
-                            metadata={"user_id": self.user_email, "source": "google_drive", "file_id": file_id}
+                            metadata={
+                                "user_id": self.user_email, 
+                                "source": "google_drive", 
+                                "file_id": file_id,
+                                "title": file['name'],
+                                "source_link": file.get('webViewLink'),
+                                "url": file.get('webViewLink')
+                            }
                         )
                         synced_count += 1
                     finally:
