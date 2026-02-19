@@ -16,10 +16,13 @@ interface Source {
     title: string;
     display: string;
     link?: string;
-    chunks?: string[];
+    snippet?: string;
+    source_type?: string;
 }
 
 function MessageContent({ content, sources = [] }: { content: string; sources?: Source[] }) {
+    const [expandedSnippet, setExpandedSnippet] = useState<number | null>(null);
+
     // 1. Parse Personal Reasoning (Handle typos like PERNALIZED)
     const reasoningRegex = /\[(?:PERSONAL_REASONING|PERNALIZED_CONTEXT_USED)(?::\s*(.*?))?\]/i;
     const reasoningMatch = content.match(reasoningRegex);
@@ -147,6 +150,7 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
                             const displayTitle = matchedSource?.display || baseTitle;
                             const link = matchedSource?.link;
                             const pages = citation?.pages;
+                            const snippet = matchedSource?.snippet;
 
                             return (
                                 <motion.div
@@ -157,7 +161,7 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
                                     whileHover={{ y: -4, scale: 1.01 }}
                                     className="group/source relative h-full"
                                 >
-                                    <div className="h-full flex flex-col p-4 rounded-[24px] glass-dark border border-gray-200/50 dark:border-white/5 bg-white/70 dark:bg-black/60 hover:border-blue-500/40 hover:bg-blue-500/[0.02] transition-all duration-300 shadow-xl shadow-black/5 overflow-hidden">
+                                    <div className="h-full flex flex-col p-4 rounded-[24px] glass-dark border border-gray-200/50 dark:border-white/5 bg-white/70 dark:bg-black/60 hover:border-blue-500/40 hover:bg-blue-500/[0.02] transition-all duration-300 shadow-xl shadow-black/5">
                                         <div className="flex items-start justify-between mb-3">
                                             <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/20">
                                                 <FileText size={18} className="text-white" />
@@ -178,21 +182,30 @@ function MessageContent({ content, sources = [] }: { content: string; sources?: 
                                             {displayTitle}
                                         </h4>
 
-                                        {/* Direct Excerpts (Chunks) */}
-                                        {matchedSource?.chunks && matchedSource.chunks.length > 0 && (
-                                            <details className="mb-4 group/chunks">
-                                                <summary className="text-[9px] font-black uppercase tracking-widest text-blue-500 cursor-pointer hover:text-blue-600 list-none flex items-center gap-2">
-                                                    <ChevronRight size={10} className="group-open/chunks:rotate-90 transition-transform" />
-                                                    Direct Excerpts ({matchedSource.chunks.length})
-                                                </summary>
-                                                <div className="mt-2 space-y-2 max-h-[150px] overflow-y-auto scrollbar-thin pr-2">
-                                                    {matchedSource.chunks.map((chunk, cidx) => (
-                                                        <div key={cidx} className="p-2 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5 text-[10px] text-gray-600 dark:text-gray-400 font-medium italic leading-relaxed">
-                                                            "{chunk.length > 300 ? chunk.substring(0, 300) + "..." : chunk}"
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </details>
+                                        {snippet && (
+                                            <div className="mb-4">
+                                                <button
+                                                    onClick={() => setExpandedSnippet(expandedSnippet === idx ? null : idx)}
+                                                    className="flex items-center gap-2 text-[10px] font-black text-blue-500/70 hover:text-blue-500 uppercase tracking-widest transition-colors"
+                                                >
+                                                    {expandedSnippet === idx ? <X size={10} /> : <Zap size={10} />}
+                                                    {expandedSnippet === idx ? "Close Excerpt" : "Read Referenced Part"}
+                                                </button>
+                                                <AnimatePresence>
+                                                    {expandedSnippet === idx && (
+                                                        <motion.div
+                                                            initial={{ height: 0, opacity: 0 }}
+                                                            animate={{ height: "auto", opacity: 1 }}
+                                                            exit={{ height: 0, opacity: 0 }}
+                                                            className="overflow-hidden"
+                                                        >
+                                                            <div className="mt-2 p-3 rounded-xl bg-blue-500/5 border border-blue-500/10 text-[11px] text-gray-700 dark:text-gray-300 font-medium leading-relaxed italic border-l-2 border-l-blue-500/50 text-wrap break-words whitespace-pre-wrap">
+                                                                "...{snippet}..."
+                                                            </div>
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
                                         )}
 
                                         <div className="mt-auto pt-3 border-t border-gray-100 dark:border-white/5 flex items-center justify-between">
@@ -241,8 +254,12 @@ function ChatBody() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const searchParams = useSearchParams();
 
+    const [isAutoScrolling, setIsAutoScrolling] = useState(true);
+
     const scrollToBottom = () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        if (isAutoScrolling) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
     };
 
     const fetchThreads = async (shouldSelectLatest = false) => {
@@ -360,6 +377,14 @@ function ChatBody() {
     const [replyingTo, setReplyingTo] = useState<any>(null);
     const [selectionPopup, setSelectionPopup] = useState<{ x: number, y: number, text: string } | null>(null);
     const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    // Track if user has scrolled up
+    const handleScroll = (e: any) => {
+        const threshold = 100;
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        const atBottom = scrollHeight - scrollTop - clientHeight < threshold;
+        setIsAutoScrolling(atBottom);
+    };
 
     const handleCopy = (text: string) => {
         navigator.clipboard.writeText(text);
@@ -499,20 +524,47 @@ function ChatBody() {
                             fetchThreads();
                         }
                     } else if (data.startsWith("EVENT:THINKING:")) {
-                        setThinkingStep(data.replace("EVENT:THINKING:", "").trim());
+                        const step = data.replace("EVENT:THINKING:", "").trim();
+                        setThinkingStep(step);
+
+                        if (!streamStarted) {
+                            streamStarted = true;
+                            setMessages(prev => [...prev, {
+                                role: "assistant",
+                                content: step,
+                                sources: accumulatedSources,
+                                isThinking: true
+                            }]);
+                        } else {
+                            setMessages(prev => {
+                                const newMsgs = [...prev];
+                                const last = newMsgs[newMsgs.length - 1];
+                                if (last.role === "assistant" && last.isThinking) {
+                                    last.content = step;
+                                }
+                                return newMsgs;
+                            });
+                        }
                     } else if (data.startsWith("EVENT:SOURCES:")) {
                         try {
-                            const sources = JSON.parse(data.replace("EVENT:SOURCES:", "").trim());
-                            accumulatedSources = sources;
-                            setFoundSources(sources);
+                            const found = JSON.parse(data.replace("EVENT:SOURCES:", "").trim());
+                            accumulatedSources = found;
+                            setFoundSources(found);
 
-                            // If message already started, update its sources retroactively
-                            if (streamStarted) {
+                            if (!streamStarted) {
+                                streamStarted = true;
+                                setMessages(prev => [...prev, {
+                                    role: "assistant",
+                                    content: "Retrieving Academic Intelligence...",
+                                    sources: found,
+                                    isThinking: true
+                                }]);
+                            } else {
                                 setMessages(prev => {
                                     const newMsgs = [...prev];
                                     const lastMsg = newMsgs[newMsgs.length - 1];
-                                    if (lastMsg.role === "assistant") {
-                                        lastMsg.sources = accumulatedSources;
+                                    if (lastMsg && lastMsg.role === "assistant") {
+                                        lastMsg.sources = found;
                                     }
                                     return newMsgs;
                                 });
@@ -521,16 +573,26 @@ function ChatBody() {
                     } else {
                         // Regular token content
                         if (!streamStarted) {
-                            // Start new assistant message
                             streamStarted = true;
                             setThinkingStep(null);
-
                             setMessages(prev => [...prev, {
                                 role: "assistant",
                                 content: "",
-                                sources: accumulatedSources // Attach whatever valid sources we have
+                                sources: accumulatedSources,
+                                isThinking: false
                             }]);
                         }
+
+                        // Force flip thinking off if we have actual content
+                        setMessages(prev => {
+                            const newMsgs = [...prev];
+                            const last = newMsgs[newMsgs.length - 1];
+                            if (last && last.role === "assistant" && last.isThinking) {
+                                last.isThinking = false;
+                                last.content = "";
+                            }
+                            return newMsgs;
+                        });
 
                         // Some chunks might be raw text or JSON token ({"token": "..."})
                         // Try parsing JSON first (if backend sends streaming JSON)
@@ -600,7 +662,10 @@ function ChatBody() {
                 onNewChat={() => { setActiveThreadId("new"); setMessages([]); }}
                 onDeleteThread={handleDeleteThread}
             />
-            <main className="flex-1 flex flex-col relative bg-dot-pattern">
+            <main
+                className="flex-1 flex flex-col relative bg-dot-pattern"
+                onScroll={handleScroll}
+            >
                 <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/5 rounded-full blur-[120px] pointer-events-none" />
                 <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-purple-600/5 rounded-full blur-[120px] pointer-events-none" />
 
@@ -679,7 +744,15 @@ function ChatBody() {
                                                 </div>
                                             </div>
                                         )}
-                                        <MessageContent content={msg.content} sources={msg.sources} />
+
+                                        {msg.isThinking ? (
+                                            <div className="flex items-center gap-3 py-2">
+                                                <RefreshCw size={14} className="text-blue-500 animate-spin" />
+                                                <span className="text-xs font-bold text-blue-500 animate-pulse">{msg.content || "Neural Synthesis Active..."}</span>
+                                            </div>
+                                        ) : (
+                                            <MessageContent content={msg.content} sources={msg.sources} />
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-2 px-2 opacity-0 group-hover/message:opacity-100 transition-opacity">
                                         <span className="text-[9px] uppercase tracking-widest font-black text-gray-700 dark:text-gray-600 mr-2">
@@ -704,48 +777,6 @@ function ChatBody() {
                                     </div>
                                 </motion.div>
                             ))}
-
-                            {/* Thinking State Rendering */}
-                            <AnimatePresence>
-                                {thinkingStep && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        className="flex flex-col items-start max-w-[90%] lg:max-w-[80%] space-y-4"
-                                    >
-                                        <div className="glass-dark border border-blue-500/20 rounded-[1.5rem] px-8 py-6 shadow-2xl bg-white dark:bg-black/40 relative overflow-hidden group">
-                                            <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 animate-pulse" />
-                                            <div className="flex items-center gap-4 mb-4">
-                                                <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
-                                                    <RefreshCw size={18} className="text-blue-500 animate-spin" />
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <span className="text-blue-500 font-black text-[10px] uppercase tracking-[0.2em] mb-1">Process Active</span>
-                                                    <span className="text-gray-900 dark:text-white font-bold text-sm">{thinkingStep}</span>
-                                                </div>
-                                            </div>
-
-                                            {foundSources.length > 0 && (
-                                                <motion.div
-                                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                                                    className="space-y-3 pt-4 border-t border-white/5"
-                                                >
-                                                    <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Retrieving Intelligence From:</span>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {foundSources.map((s, idx) => (
-                                                            <div key={idx} className="flex items-center gap-2 px-3 py-1.5 glass bg-blue-500/5 border border-blue-500/10 rounded-lg text-[10px] font-bold text-blue-400">
-                                                                <BookOpen size={10} />
-                                                                {s.display}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </motion.div>
-                                            )}
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
                         </div>
                     )}
                     <div ref={messagesEndRef} />
