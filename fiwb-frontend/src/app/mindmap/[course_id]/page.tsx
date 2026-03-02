@@ -399,8 +399,11 @@ function MindMapBody() {
         if (nd.citations && nd.citations.length > 0) {
             const firstCite = nd.citations[0];
             if (firstCite.material_id) {
+                // Ensure page is a number for the state
+                const pageNum = typeof firstCite.page === 'string' ? parseInt(firstCite.page) : firstCite.page;
+                
                 setActiveMaterialId(firstCite.material_id);
-                setActivePage(firstCite.page || null);
+                setActivePage(pageNum || null); // Reset to null if invalid
                 setShowReader(true);
             }
         }

@@ -62,11 +62,14 @@ JSON FORMAT (return exactly this structure):
   ]
 }}
 
-edge types: "hierarchical" (parent-child), "related" (conceptual link), "prerequisite" (must learn first)
-Keep the 'source' in citations EXACTLY matching the [MATERIAL: title] provided below.
-If a page number is found in the text near the concept, include it.
-
 COURSE MATERIALS:
+The content below includes page markers like "--- [PAGE N] ---". 
+When generating nodes and citations:
+1. Every citation MUST have a "page" number (integer). Use the most recent "--- [PAGE N] ---" marker above the text where the concept is found as the page number. 
+2. If the concept appears on multiple pages, just cite the first/primary occurrence.
+3. Keep the 'source' in citations EXACTLY matching the [MATERIAL: title] provided below.
+4. If there's NO [PAGE N] marker (e.g., text-only file), set "page" to null.
+
 {content}
 """
 
