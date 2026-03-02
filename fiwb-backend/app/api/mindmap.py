@@ -228,28 +228,32 @@ async def generate_mindmap(
     # ── MAP SOURCES TO GOOGLE FILE IDs FOR FRONTEND READER ─────────
     # We want to map the material title back to the ACTUAL Google Drive file_id
     # so the frontend split-view reader can open it.
+    # Prefer PDF/Drive file IDs for better reading experience
     title_to_file_id = {}
     for m in materials:
+        fid = None
         if m.attachments and m.attachments != "[]":
             try:
                 atts = json.loads(m.attachments)
-                if atts:
-                    # Prefer PDF/Drive file IDs
-                    primary = atts[0]
-                    fid = primary.get("file_id") or primary.get("id")
+                for att in atts:
+                    fid = att.get("file_id") or att.get("id")
                     if fid:
-                        title_to_file_id[m.title] = fid
+                        # If we find a PDF or drive file, we take it and break
+                        mime = str(att.get("mime_type") or "").lower()
+                        if "pdf" in mime or att.get("type") == "drive_file":
+                            break
             except:
                 pass
-        # Fallback to database ID if no attachment (though proxy won't work for text-only anyway)
-        if m.title not in title_to_file_id:
-            title_to_file_id[m.title] = m.id
+        
+        # Fallback to database ID if no file_id found, but store it by normalized title
+        title_to_file_id[m.title.strip().lower()] = fid or m.id
 
     nodes = graph_data.get("nodes", [])
     for n in nodes:
         citations = n.get("citations", [])
         for c in citations:
-            c["material_id"] = title_to_file_id.get(c["source"])
+            source_title = str(c.get("source", "")).strip().lower()
+            c["material_id"] = title_to_file_id.get(source_title)
 
     final_result = {
         "title": graph_data.get("title", course.name),

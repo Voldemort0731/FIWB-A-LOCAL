@@ -403,15 +403,24 @@ function MindMapBody() {
         // Sync with reader: if node has citations, open the first one in the reader
         if (nd.citations && nd.citations.length > 0) {
             const firstCite = nd.citations[0];
-            if (firstCite.material_id) {
-                setActiveMaterialId(firstCite.material_id);
+
+            // Try to find the file_id from material_id (backend provided) 
+            // OR look it up in availableSources by title
+            let fileId = firstCite.material_id;
+            if (!fileId || fileId === firstCite.source) {
+                const found = availableSources.find(s => s.title === firstCite.source);
+                if (found) fileId = found.file_id || found.id;
+            }
+
+            if (fileId) {
+                setActiveMaterialId(fileId);
                 setActivePage(firstCite.page || null);
                 setShowReader(true);
             }
         }
 
         setCenter(node.position.x + 90, node.position.y + 40, { zoom: 1.2, duration: 500 });
-    }, [setCenter]);
+    }, [setCenter, availableSources]);
 
     /* ── Focus mode: dim other nodes ── */
     useEffect(() => {
@@ -579,7 +588,9 @@ function MindMapBody() {
                                         />
                                         {/* Reader Header Overlay */}
                                         <div className="absolute top-0 left-0 right-0 h-10 bg-black/80 backdrop-blur flex items-center justify-between px-4 border-b border-white/5">
-                                            <p className="text-[10px] text-gray-400 font-bold truncate"> Reference: {availableSources.find(s => s.id === activeMaterialId)?.title}</p>
+                                            <p className="text-[10px] text-gray-400 font-bold truncate">
+                                                Reference: {availableSources.find(s => (s.id === activeMaterialId || s.file_id === activeMaterialId))?.title || "Document"}
+                                            </p>
                                             <button
                                                 onClick={() => setShowReader(false)}
                                                 className="p-1 hover:bg-white/10 rounded"
@@ -876,8 +887,14 @@ function MindMapBody() {
                                                 <button
                                                     key={i}
                                                     onClick={() => {
-                                                        if (cite.material_id) {
-                                                            setActiveMaterialId(cite.material_id);
+                                                        let fileId = cite.material_id;
+                                                        if (!fileId || fileId === cite.source) {
+                                                            const found = availableSources.find(s => s.title === cite.source);
+                                                            if (found) fileId = found.file_id || found.id;
+                                                        }
+
+                                                        if (fileId) {
+                                                            setActiveMaterialId(fileId);
                                                             setActivePage(cite.page || null);
                                                             setShowReader(true);
                                                         }
