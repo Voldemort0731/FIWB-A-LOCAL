@@ -78,6 +78,9 @@ class ChatThread(Base):
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     material_id = Column(String, nullable=True, index=True) # Links to source doc for analysis threads
+    course_id = Column(String, ForeignKey("courses.id"), nullable=True, index=True) # For course-level context (e.g. mindmaps)
+    thread_type = Column(String, default="chat", index=True) # chat, analysis, mindmap
+    mindmap_data = Column(Text, nullable=True) # Cached JSON mindmap data
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -83,6 +83,9 @@ async def on_startup():
         from sqlalchemy import text
         migrations = [
             "ALTER TABLE chat_threads ADD COLUMN material_id VARCHAR",
+            "ALTER TABLE chat_threads ADD COLUMN course_id VARCHAR",
+            "ALTER TABLE chat_threads ADD COLUMN thread_type VARCHAR DEFAULT 'chat'",
+            "ALTER TABLE chat_threads ADD COLUMN mindmap_data TEXT",
         ]
         def run_migrations():
             with engine.connect() as conn:
@@ -91,7 +94,7 @@ async def on_startup():
                         conn.execute(text(sql))
                         conn.commit()
                         logger.info(f"Migration applied: {sql}")
-                    except Exception:
+                    except Exception as e:
                         conn.rollback()  # Column already exists, skip
         await asyncio.to_thread(run_migrations)
     except Exception as e:

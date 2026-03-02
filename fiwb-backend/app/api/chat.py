@@ -56,7 +56,9 @@ async def list_threads(user_email: str, db: Session = Depends(get_db)):
         "id": t.id,
         "title": t.title,
         "updated_at": t.updated_at,
-        "material_id": t.material_id
+        "material_id": t.material_id,
+        "course_id": t.course_id,
+        "thread_type": t.thread_type or "chat"
     } for t in threads]
 
 @router.get("/threads/{thread_id}/messages")

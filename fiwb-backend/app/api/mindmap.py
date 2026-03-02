@@ -13,7 +13,9 @@ from app.utils.clients import SharedClients
 import json
 import logging
 import asyncio
+import uuid
 from app.lms.drive_service import DriveSyncService
+from app.models import User, Course, Material, ChatThread
 
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
@@ -81,6 +83,7 @@ async def generate_mindmap(
     user_email = payload.get("user_email")
     course_id = payload.get("course_id")
     material_ids = payload.get("material_ids", [])  # Optional: subset of materials
+    thread_id = payload.get("thread_id")
 
     if not user_email or not course_id:
         raise HTTPException(status_code=400, detail="user_email and course_id are required")
@@ -90,6 +93,42 @@ async def generate_mindmap(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # ── CHECK CACHE / HISTORY ──────────────────────────────────────
+    existing_thread = None
+    if thread_id:
+        existing_thread = db.query(ChatThread).filter(
+            ChatThread.id == thread_id,
+            ChatThread.user_id == user.id
+        ).first()
+    
+    if not existing_thread:
+        # Fallback to finding by material/course if no thread_id provided
+        target_material_id = material_ids[0] if (material_ids and len(material_ids) == 1) else None
+        if target_material_id:
+            existing_thread = db.query(ChatThread).filter(
+                ChatThread.user_id == user.id,
+                ChatThread.material_id == target_material_id,
+                ChatThread.thread_type == "mindmap"
+            ).first()
+        elif not material_ids: # Course-wide
+            existing_thread = db.query(ChatThread).filter(
+                ChatThread.user_id == user.id,
+                ChatThread.course_id == course_id,
+                ChatThread.thread_type == "mindmap",
+                ChatThread.material_id == None
+            ).first()
+
+    if existing_thread and existing_thread.mindmap_data:
+        try:
+            cached_data = json.loads(existing_thread.mindmap_data)
+            logger.info(f"[MindMap] Returning cached graph for thread: {existing_thread.id}")
+            cached_data["thread_id"] = existing_thread.id
+            cached_data["material_id"] = existing_thread.material_id
+            return cached_data
+        except:
+            pass # Fallback to re-generation if JSON is corrupt
+
+    # ── GENERATE NEW GRAPH ─────────────────────────────────────────
     course = db.query(Course).filter(Course.id == course_id).first()
     if not course or course not in user.courses:
         raise HTTPException(status_code=403, detail="Course not found or access denied")
@@ -211,7 +250,7 @@ async def generate_mindmap(
         for c in citations:
             c["material_id"] = title_to_file_id.get(c["source"])
 
-    return {
+    final_result = {
         "title": graph_data.get("title", course.name),
         "nodes": nodes,
         "edges": graph_data.get("edges", []),
@@ -219,6 +258,29 @@ async def generate_mindmap(
         "course_name": course.name,
         "total_materials": len(materials)
     }
+
+    # ── PERSIST TO HISTORY ──────────────────────────────────────────
+    if not existing_thread:
+        new_thread = ChatThread(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            title=f"Graph: {final_result['title']}",
+            material_id=target_material_id,
+            course_id=course_id,
+            thread_type="mindmap",
+            mindmap_data=json.dumps(final_result)
+        )
+        db.add(new_thread)
+        db.commit()
+        final_result["thread_id"] = new_thread.id
+        final_result["material_id"] = target_material_id
+    else:
+        existing_thread.mindmap_data = json.dumps(final_result)
+        db.commit()
+        final_result["thread_id"] = existing_thread.id
+        final_result["material_id"] = existing_thread.material_id
+
+    return final_result
 
 
 @router.get("/sources/{course_id}")

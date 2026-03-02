@@ -124,8 +124,23 @@ export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, 
                         <div className="space-y-1">
                             <AnimatePresence>
                                 {threads.map((thread) => {
-                                    const isAnalysis = !!thread.material_id;
-                                    const ThreadIcon = isAnalysis ? BookOpen : MessageCircle;
+                                    const isMindmap = thread.thread_type === "mindmap";
+                                    const isAnalysis = !!thread.material_id && !isMindmap;
+
+                                    let ThreadIcon = MessageCircle;
+                                    let iconColor = "text-gray-400 dark:text-gray-600";
+                                    let labelText = null;
+
+                                    if (isMindmap) {
+                                        ThreadIcon = Network;
+                                        iconColor = "text-indigo-500";
+                                        labelText = <span className="text-[8px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 rounded font-black uppercase tracking-widest shrink-0">Map</span>;
+                                    } else if (isAnalysis) {
+                                        ThreadIcon = BookOpen;
+                                        iconColor = "text-emerald-500";
+                                        labelText = <span className="text-[8px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-black uppercase tracking-widest shrink-0">Doc</span>;
+                                    }
+
                                     return (
                                         <motion.div
                                             initial={{ opacity: 0, x: -10 }}
@@ -139,7 +154,9 @@ export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, 
                                                     : "hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 border-transparent"
                                             )}
                                             onClick={() => {
-                                                if (isAnalysis) {
+                                                if (isMindmap) {
+                                                    window.location.href = `/mindmap/${thread.course_id || "placeholder"}?thread=${thread.id}`;
+                                                } else if (isAnalysis) {
                                                     window.location.href = `/analysis/${thread.material_id}?thread=${thread.id}`;
                                                 } else {
                                                     onThreadSelect?.(thread.id);
@@ -148,11 +165,10 @@ export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, 
                                         >
                                             <div className="flex items-center gap-3 min-w-0 pr-2">
                                                 <ThreadIcon size={14} className={clsx(
-                                                    activeThreadId === thread.id ? "text-blue-500" : "text-gray-400 dark:text-gray-600",
-                                                    isAnalysis && "text-emerald-500"
+                                                    activeThreadId === thread.id ? "text-blue-500" : iconColor
                                                 )} />
                                                 <span className="text-xs font-semibold truncate tracking-tight">{thread.title || "New Session"}</span>
-                                                {isAnalysis && <span className="text-[8px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-black uppercase tracking-widest shrink-0">Doc</span>}
+                                                {labelText}
                                             </div>
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); onDeleteThread?.(thread.id); }}
