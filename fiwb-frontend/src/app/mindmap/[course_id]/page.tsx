@@ -578,6 +578,7 @@ function MindMapBody() {
                                     </div>
                                 )}
                             </motion.div>
+                        )}
                     </AnimatePresence>
 
                     {/* Left Panel: Legend & Stats only (Sidebar removed as it's per-doc now) */}
