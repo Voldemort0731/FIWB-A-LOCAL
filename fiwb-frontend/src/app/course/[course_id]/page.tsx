@@ -348,7 +348,7 @@ export default function CoursePage() {
                                                                     <button
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
-                                                                            router.push(`/mindmap/${course_id}?material=${item.id}`);
+                                                                            router.push(`/mindmap/${courseId}?material=${item.id}`);
                                                                         }}
                                                                         className="px-6 py-3 glass-dark hover:bg-indigo-600/10 border border-white/5 hover:border-indigo-500/20 rounded-2xl text-xs font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center gap-2 cursor-pointer"
                                                                     >
@@ -422,7 +422,7 @@ export default function CoursePage() {
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                router.push(`/mindmap/${course_id}?material=${item.id}`);
+                                                                router.push(`/mindmap/${courseId}?material=${item.id}`);
                                                             }}
                                                             className="px-4 py-2 glass-dark hover:bg-indigo-600/10 border border-white/5 hover:border-indigo-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center gap-2 opacity-0 group-hover:opacity-100 cursor-pointer"
                                                         >
