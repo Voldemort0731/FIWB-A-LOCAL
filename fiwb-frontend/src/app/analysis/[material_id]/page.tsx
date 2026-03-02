@@ -598,12 +598,26 @@ function AnalysisBody() {
         }
     };
 
+    const handleRenameThread = async (id: string, newTitle: string) => {
+        try {
+            const res = await fetch(`${API_URL}/api/chat/threads/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_email: userEmail, title: newTitle })
+            });
+            if (res.ok) fetchThreads();
+        } catch (e) {
+            console.error("Failed to rename thread", e);
+        }
+    };
+
     return (
         <div className="h-screen bg-[#050505] flex flex-row overflow-hidden font-sans selection:bg-blue-500/30">
             <Sidebar
                 threads={threads}
                 activeThreadId={threadId || undefined}
                 onDeleteThread={handleDeleteThread}
+                onRenameThread={handleRenameThread}
             />
 
             <div className="flex-1 flex flex-col min-w-0 relative">

@@ -457,6 +457,23 @@ function MindMapBody() {
         setSelectedNode(null);
     };
 
+    const handleRenameThread = async (id: string, newTitle: string) => {
+        try {
+            const res = await fetch(`${API_URL}/api/chat/threads/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_email: userEmail, title: newTitle })
+            });
+            if (res.ok) {
+                // Refresh threads list
+                fetch(`${API_URL}/api/chat/threads?user_email=${userEmail}`)
+                    .then(r => r.json()).then(setThreads).catch(() => { });
+            }
+        } catch (e) {
+            console.error("Failed to rename thread", e);
+        }
+    };
+
     return (
         <div className="h-screen bg-[#050505] flex flex-row overflow-hidden font-sans">
             <Sidebar
@@ -466,6 +483,7 @@ function MindMapBody() {
                     await fetch(`${API_URL}/api/chat/threads/${id}?user_email=${userEmail}`, { method: "DELETE" });
                     setThreads(prev => prev.filter(t => t.id !== id));
                 }}
+                onRenameThread={handleRenameThread}
             />
 
             <div className="flex-1 flex flex-col min-w-0 relative">

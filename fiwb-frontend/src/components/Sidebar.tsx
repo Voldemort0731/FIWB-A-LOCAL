@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, MessageSquareText, Settings, LogOut, ChevronRight, Plus, MessageCircle, Trash2, TrendingUp, Mail, Cloud, BookOpen, Network } from "lucide-react";
+import { LayoutDashboard, MessageSquareText, Settings, LogOut, ChevronRight, Plus, MessageCircle, Trash2, TrendingUp, Mail, Cloud, BookOpen, Network, Edit2, Check, X as XIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import DriveSyncModal from "@/components/DriveSyncModal";
 import clsx from "clsx";
@@ -14,9 +14,94 @@ interface SidebarProps {
     onThreadSelect?: (id: string) => void;
     onNewChat?: () => void;
     onDeleteThread?: (id: string) => void;
+    onRenameThread?: (id: string, newTitle: string) => void;
 }
 
-export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, onNewChat, onDeleteThread }: SidebarProps) {
+function ThreadItem({ thread, isActive, onSelect, onDelete, onRename }: {
+    thread: any;
+    isActive: boolean;
+    onSelect: () => void;
+    onDelete: () => void;
+    onRename: (newTitle: string) => void;
+}) {
+    const [isEditing, setIsEditing] = useState(false);
+    const [title, setTitle] = useState(thread.title || "New Session");
+
+    const isMindmap = thread.thread_type === "mindmap";
+    const isAnalysis = !!thread.material_id && !isMindmap;
+
+    let ThreadIcon = MessageCircle;
+    let iconColor = "text-gray-400 dark:text-gray-600";
+    if (isMindmap) {
+        ThreadIcon = Network;
+        iconColor = "text-indigo-500";
+    } else if (isAnalysis) {
+        ThreadIcon = BookOpen;
+        iconColor = "text-emerald-500";
+    }
+
+    const handleRenameSubmit = () => {
+        if (title.trim() && title !== thread.title) {
+            onRename(title);
+        }
+        setIsEditing(false);
+    };
+
+    return (
+        <motion.div
+            layout
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -10 }}
+            className={clsx(
+                "group flex items-center justify-between p-3 rounded-xl transition-all duration-300 cursor-pointer border",
+                isActive
+                    ? "glass-card text-gray-900 dark:text-white border-blue-500/20 shadow-lg"
+                    : "hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 border-transparent"
+            )}
+            onClick={() => !isEditing && onSelect()}
+        >
+            <div className="flex items-center gap-3 min-w-0 pr-2 flex-1">
+                <ThreadIcon size={14} className={clsx(isActive ? "text-blue-500" : iconColor)} />
+                {isEditing ? (
+                    <input
+                        autoFocus
+                        type="text"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        onBlur={handleRenameSubmit}
+                        onKeyDown={(e) => e.key === "Enter" && handleRenameSubmit()}
+                        onClick={(e) => e.stopPropagation()}
+                        className="bg-white/10 border border-blue-500/30 rounded px-1.5 py-0.5 text-xs font-semibold text-white focus:outline-none w-full"
+                    />
+                ) : (
+                    <span className="text-xs font-semibold truncate tracking-tight">{thread.title || "New Session"}</span>
+                )}
+            </div>
+
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                {!isEditing && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+                        className="p-1.5 hover:bg-blue-500/10 hover:text-blue-500 rounded-lg transition-all"
+                        title="Rename Thread"
+                    >
+                        <Edit2 size={12} />
+                    </button>
+                )}
+                <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                    className="p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-all"
+                    title="Delete Thread"
+                >
+                    <Trash2 size={12} />
+                </button>
+            </div>
+        </motion.div>
+    );
+}
+
+export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, onNewChat, onDeleteThread, onRenameThread }: SidebarProps) {
     const pathname = usePathname();
     const [email, setEmail] = useState<string | null>(null);
     const [isDriveModalOpen, setIsDriveModalOpen] = useState(false);
@@ -119,69 +204,66 @@ export default function Sidebar({ threads = [], activeThreadId, onThreadSelect, 
                 </section>
 
                 {showThreads && threads.length > 0 && (
-                    <section className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-600 uppercase tracking-[0.2em] mb-4 px-3">Recent Chats</p>
-                        <div className="space-y-1">
-                            <AnimatePresence>
-                                {threads.map((thread) => {
-                                    const isMindmap = thread.thread_type === "mindmap";
-                                    const isAnalysis = !!thread.material_id && !isMindmap;
+                    <div className="space-y-8 mt-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                        {/* Grouped Threads */}
+                        {[
+                            {
+                                label: "AI Conversations",
+                                type: "chat",
+                                icon: MessageCircle,
+                                color: "text-blue-500",
+                                filter: (t: any) => t.thread_type === "chat" || !t.thread_type
+                            },
+                            {
+                                label: "Document Analysis",
+                                type: "analysis",
+                                icon: BookOpen,
+                                color: "text-emerald-500",
+                                filter: (t: any) => t.thread_type === "analysis" || (!!t.material_id && t.thread_type !== "mindmap")
+                            },
+                            {
+                                label: "Concept Graphs",
+                                type: "mindmap",
+                                icon: Network,
+                                color: "text-indigo-500",
+                                filter: (t: any) => t.thread_type === "mindmap"
+                            }
+                        ].map((group) => {
+                            const groupThreads = threads.filter(group.filter);
+                            if (groupThreads.length === 0) return null;
 
-                                    let ThreadIcon = MessageCircle;
-                                    let iconColor = "text-gray-400 dark:text-gray-600";
-                                    let labelText = null;
-
-                                    if (isMindmap) {
-                                        ThreadIcon = Network;
-                                        iconColor = "text-indigo-500";
-                                        labelText = <span className="text-[8px] px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 rounded font-black uppercase tracking-widest shrink-0">Map</span>;
-                                    } else if (isAnalysis) {
-                                        ThreadIcon = BookOpen;
-                                        iconColor = "text-emerald-500";
-                                        labelText = <span className="text-[8px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-black uppercase tracking-widest shrink-0">Doc</span>;
-                                    }
-
-                                    return (
-                                        <motion.div
-                                            initial={{ opacity: 0, x: -10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: -10 }}
-                                            key={thread.id}
-                                            className={clsx(
-                                                "group flex items-center justify-between p-3 rounded-xl transition-all duration-300 cursor-pointer border",
-                                                activeThreadId === thread.id
-                                                    ? "glass-card text-gray-900 dark:text-white border-blue-500/20 shadow-lg"
-                                                    : "hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 border-transparent"
-                                            )}
-                                            onClick={() => {
-                                                if (isMindmap) {
-                                                    window.location.href = `/mindmap/${thread.course_id || "placeholder"}?thread=${thread.id}`;
-                                                } else if (isAnalysis) {
-                                                    window.location.href = `/analysis/${thread.material_id}?thread=${thread.id}`;
-                                                } else {
-                                                    onThreadSelect?.(thread.id);
-                                                }
-                                            }}
-                                        >
-                                            <div className="flex items-center gap-3 min-w-0 pr-2">
-                                                <ThreadIcon size={14} className={clsx(
-                                                    activeThreadId === thread.id ? "text-blue-500" : iconColor
-                                                )} />
-                                                <span className="text-xs font-semibold truncate tracking-tight">{thread.title || "New Session"}</span>
-                                                {labelText}
-                                            </div>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onDeleteThread?.(thread.id); }}
-                                                className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-all"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
-                                        </motion.div>
-                                    );
-                                })}
-                            </AnimatePresence>
-                        </div>
-                    </section>
+                            return (
+                                <section key={group.type}>
+                                    <div className="flex items-center gap-2 mb-3 px-3">
+                                        <group.icon size={10} className={clsx("opacity-40", group.color)} />
+                                        <p className="text-[10px] font-black text-gray-500 dark:text-gray-600 uppercase tracking-[0.2em]">{group.label}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <AnimatePresence mode="popLayout">
+                                            {groupThreads.map((thread) => (
+                                                <ThreadItem
+                                                    key={thread.id}
+                                                    thread={thread}
+                                                    isActive={activeThreadId === thread.id}
+                                                    onSelect={() => {
+                                                        if (thread.thread_type === "mindmap") {
+                                                            window.location.href = `/mindmap/${thread.course_id || "placeholder"}?thread=${thread.id}`;
+                                                        } else if (thread.thread_type === "analysis" || thread.material_id) {
+                                                            window.location.href = `/analysis/${thread.material_id}?thread=${thread.id}`;
+                                                        } else {
+                                                            onThreadSelect?.(thread.id);
+                                                        }
+                                                    }}
+                                                    onDelete={() => onDeleteThread?.(thread.id)}
+                                                    onRename={(newTitle) => onRenameThread?.(thread.id, newTitle)}
+                                                />
+                                            ))}
+                                        </AnimatePresence>
+                                    </div>
+                                </section>
+                            );
+                        })}
+                    </div>
                 )}
             </div>
 

@@ -272,6 +272,20 @@ function ChatBody() {
         }
     };
 
+    const handleRenameThread = async (id: string, newTitle: string) => {
+        const email = standardize_email(localStorage.getItem("user_email"));
+        try {
+            const res = await fetch(`${API_URL}/api/chat/threads/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_email: email, title: newTitle })
+            });
+            if (res.ok) fetchThreads();
+        } catch (e) {
+            console.error("Failed to rename thread", e);
+        }
+    };
+
     const sendMessage = async (forcedContent?: string, attachmentText?: string, targetMaterialId?: string) => {
         const contentToUse = typeof forcedContent === "string" ? forcedContent : input;
         if (!contentToUse.trim() && !selectedFile) return;
@@ -425,6 +439,7 @@ function ChatBody() {
                 onThreadSelect={handleThreadSelect}
                 onNewChat={() => { setActiveThreadId("new"); setMessages([]); }}
                 onDeleteThread={handleDeleteThread}
+                onRenameThread={handleRenameThread}
             />
 
             <main className="flex-1 flex overflow-hidden relative">

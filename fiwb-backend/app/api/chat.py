@@ -127,6 +127,27 @@ async def delete_thread(thread_id: str, user_email: str, db: Session = Depends(g
     db.commit()
     return {"status": "deleted"}
 
+@router.put("/threads/{thread_id}")
+async def rename_thread(thread_id: str, payload: dict, db: Session = Depends(get_db)):
+    user_email = payload.get("user_email")
+    new_title = payload.get("title")
+    if not user_email or not new_title:
+        raise HTTPException(status_code=400, detail="user_email and title are required")
+        
+    actual_email = standardize_email(user_email)
+    user = db.query(User).filter(User.email == actual_email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    thread = db.query(ChatThread).filter(ChatThread.id == thread_id, ChatThread.user_id == user.id).first()
+    if not thread:
+        raise HTTPException(status_code=403, detail="Not authorized or thread not found")
+
+    thread.title = new_title
+    thread.updated_at = datetime.utcnow()
+    db.commit()
+    return {"id": thread.id, "title": thread.title}
+
 @router.post("/stream")
 async def chat_stream(
     background_tasks: BackgroundTasks,
