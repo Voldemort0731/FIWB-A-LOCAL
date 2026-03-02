@@ -211,12 +211,6 @@ class LMSSyncService:
                     asyncio.create_task(self._index_item(
                         content, title, desc, item_id, course_id, course_name, professor, "assignment", work.get('alternateLink')
                     ))
-                    
-                    # Index attachments too
-                    if attachments:
-                        asyncio.create_task(self._index_drive_attachments(
-                            work.get('materials', []), item_id, content, course_id, course_name, professor, "assignment"
-                        ))
 
                 if item_id in existing_local_ids:
                     # HEAL: If existing item is missing attachments or has old content style, update it
@@ -261,12 +255,6 @@ class LMSSyncService:
                     asyncio.create_task(self._index_item(
                         content, title, desc, item_id, course_id, course_name, professor, "material", mat.get('alternateLink')
                     ))
-
-                    # Index attachments too
-                    if attachments:
-                        asyncio.create_task(self._index_drive_attachments(
-                            mat.get('materials', []), item_id, content, course_id, course_name, professor, "material"
-                        ))
 
                 if item_id in existing_local_ids:
                     # HEAL: If existing item is missing attachments or has old content style, update it
@@ -331,8 +319,8 @@ class LMSSyncService:
 
                     # Index every Drive file attached to this announcement
                     if ann_materials:
-                        asyncio.create_task(self._index_drive_attachments(
-                            ann_materials, item_id, text, course_id, course_name, professor, "announcement"
+                        asyncio.create_task(self._index_announcement_drive_files(
+                            ann_materials, item_id, text, course_id, course_name, professor
                         ))
 
                 if item_id in existing_local_ids:
@@ -404,15 +392,15 @@ class LMSSyncService:
         except Exception as e:
             logger.warning(f"[Sync] Supermemory index failed for {item_id}: {e}")
 
-    async def _index_drive_attachments(
-        self, materials: list, parent_id: str, parent_text: str,
-        course_id: str, course_name: str, professor: str, item_type: str = "attachment"
+    async def _index_announcement_drive_files(
+        self, materials: list, ann_id: str, ann_text: str,
+        course_id: str, course_name: str, professor: str
     ):
         """
-        Finds and indexes ALL Drive files referenced by an item (Announcement, Assignment, Material):
+        Finds and indexes ALL Drive files referenced by an announcement:
           1. Proper driveFile attachments (pinned from Google Drive)
           2. Link-type attachments whose URL is a Google Drive/Docs URL
-          3. Raw Google Drive / Docs URLs pasted directly in the text
+          3. Raw Google Drive / Docs URLs pasted directly in the announcement text
         Each file is downloaded, extracted (PDF/Docs/Sheets/etc.), and indexed
         into Supermemory with full course + professor context.
         """
@@ -448,7 +436,7 @@ class LMSSyncService:
                         'mime':  mime,   # may be empty — resolved via API below
                     }
 
-        # ── SOURCE 3: Raw Drive URLs pasted directly in the text ────
+        # ── SOURCE 3: Raw Drive URLs pasted directly in the announcement text ────
         drive_url_re = re.compile(
             r'https://(?:'
             r'docs\.google\.com/(?:document|spreadsheets|presentation|forms)/d/'
@@ -456,12 +444,12 @@ class LMSSyncService:
             r')([a-zA-Z0-9_-]+)',
             re.IGNORECASE
         )
-        for m in drive_url_re.finditer(parent_text or ""):
+        for m in drive_url_re.finditer(ann_text):
             full_url = m.group(0)
             fid, mime = self._extract_drive_file_id_and_mime(full_url)
             if fid and fid not in files_to_process:
                 files_to_process[fid] = {
-                    'title': f'Drive File from {item_type}',
+                    'title': 'Drive File from Announcement',
                     'link':  full_url,
                     'mime':  mime,
                 }
@@ -487,7 +475,7 @@ class LMSSyncService:
                                 ).execute()
                             )
                         mime = meta.get('mimeType', '')
-                        if file_title in (f'Drive File from {item_type}', 'Drive File'):
+                        if file_title in ('Drive File from Announcement', 'Drive File'):
                             file_title = meta.get('name', file_title)
                         if not file_link:
                             file_link = meta.get('webViewLink', '')
@@ -500,15 +488,15 @@ class LMSSyncService:
 
                 if extracted and len(extracted.strip()) >= 50:
                     full_content = (
-                        f"Course Material from {professor or 'Faculty'} in {course_name}\n"
-                        f"From {item_type.capitalize()}: {parent_text[:400] if parent_text else 'No text'}\n\n"
+                        f"Course Material (Drive File) shared by {professor} in {course_name}\n"
+                        f"From Announcement: {ann_text[:400]}\n\n"
                         f"--- File: {file_title} ---\n{extracted}"
                     )
                 else:
                     # Unextractable (image, empty) — index metadata so AI knows it exists
                     full_content = (
-                        f"Drive file '{file_title}' shared from {item_type} in {course_name}.\n"
-                        f"Shared by: {professor or 'Faculty'}"
+                        f"Drive file '{file_title}' shared by {professor} in {course_name}.\n"
+                        f"Announcement: {ann_text[:600]}"
                     )
 
                 metadata = {
@@ -516,13 +504,13 @@ class LMSSyncService:
                     "course_id":              course_id,
                     "course_name":            course_name,
                     "professor":              professor,
-                    "type":                   f"{item_type}_attachment",
-                    "source_id":              f"{item_type}_{parent_id}_att_{file_id}",
+                    "type":                   "announcement_drive_attachment",
+                    "source_id":              f"ann_{ann_id}_drive_{file_id}",
                     "source":                 "google_classroom",
                     "source_link":            file_link,
                     "file_title":             file_title,
                     "mime_type":              mime,
-                    "parent_item_id":         parent_id,
+                    "parent_announcement_id": ann_id,
                 }
 
                 # --- Step 2: Persist to Local Database ---
