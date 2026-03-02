@@ -27,14 +27,15 @@ Analyze the following course materials and extract a hierarchical concept map.
 
 STRICT RULES:
 1. Return ONLY valid JSON — no markdown, no code blocks, no prose.
-2. Create 1 root node (the course/topic name).
-3. Create 3 to 6 main topic nodes (level 1).
-4. Create 2 to 4 subtopic nodes per main topic (level 2).
-5. Optionally create 1 to 2 detail nodes per subtopic (level 3) for the most important concepts.
-6. Total nodes: between 15 and 50.
-7. Every node must have a concise definition (1 sentence).
-8. For each edge, include a relationship label (e.g. "includes", "requires", "leads to").
-9. Mark which materials each concept appears in (use the material titles as source labels).
+2. STRICT GROUNDING: Use ONLY the provided materials. DO NOT use external knowledge. Every concept MUST be present in the text below.
+3. Every node must have a concise definition (1 sentence) extracted or summarized directly from the source.
+4. For each edge, include a relationship label (e.g. "includes", "requires", "leads to").
+5. CITATIONS ARE MANDATORY: Every node must cite the material it came from using the EXACT [MATERIAL: title] provided.
+6. Create 1 root node (the course/topic name).
+7. Create 3 to 6 main topic nodes (level 1).
+8. Create 2 to 4 subtopic nodes per main topic (level 2).
+9. Optionally create 1 to 2 detail nodes per subtopic (level 3) for the most important concepts.
+10. Total nodes: between 15 and 50.
 
 JSON FORMAT (return exactly this structure):
 {{
@@ -63,7 +64,7 @@ JSON FORMAT (return exactly this structure):
 
 edge types: "hierarchical" (parent-child), "related" (conceptual link), "prerequisite" (must learn first)
 Keep the 'source' in citations EXACTLY matching the [MATERIAL: title] provided below.
-If a page is mentioned in the [MATERIAL: title] (e.g., PAGE 5), include that number.
+If a page number is found in the text near the concept, include it.
 
 COURSE MATERIALS:
 {content}
