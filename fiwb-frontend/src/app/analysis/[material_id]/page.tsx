@@ -313,6 +313,25 @@ function AnalysisBody() {
 
                 setMaterial(data);
 
+                // --- CHECK CACHE / HISTORY ---
+                if (!existingThreadId && !hasInitialized.current) {
+                    try {
+                        const findRes = await fetch(`${API_URL}/api/chat/threads/find?user_email=${userEmail}&material_id=${material_id}&thread_type=analysis`);
+                        const found = await findRes.json();
+                        if (found && found.id) {
+                            console.info("[Analysis] Found existing thread:", found.id);
+                            // Update URL so it doesn't trigger initial analysis
+                            const current = new URLSearchParams(Array.from(searchParams.entries()));
+                            current.set("thread", found.id);
+                            router.replace(`${window.location.pathname}?${current.toString()}`);
+                            setThreadId(found.id);
+                            return; // Let history effect take over
+                        }
+                    } catch (e) {
+                        console.error("Cache lookup failed:", e);
+                    }
+                }
+
                 // Select first PDF or any attachment
                 const attachments = data.attachments || [];
                 const firstDoc = attachments.find((a: any) =>
@@ -359,15 +378,7 @@ function AnalysisBody() {
         loadHistory();
     }, [existingThreadId, userEmail]);
 
-    // Initial analysis trigger (runs once after material loads, ONLY for new sessions)
-    useEffect(() => {
-        if (!material || hasInitialized.current || messages.length > 0 || existingThreadId) return;
-        hasInitialized.current = true;
 
-        const docName = activeAttachment ? activeAttachment.title : material.title;
-        const initQuery = `Analyze and summarize this "${docName}". Give an executive summary and suggested inquiries.`;
-        sendMessage(initQuery, material.content || "");
-    }, [material, activeAttachment]);
 
     // Copy message content
     const copyMessage = useCallback((content: string, id: string) => {
@@ -405,7 +416,7 @@ function AnalysisBody() {
     }, [activeAttachment, userEmail]);
 
     // Main send message function
-    const sendMessage = async (query: string, attachmentText?: string) => {
+    const sendMessage = useCallback(async (query: string, attachmentText?: string) => {
         if (!query.trim() || streaming) return;
 
         const userMsg: Message = { role: "user", content: query, id: Date.now().toString() };
@@ -532,7 +543,21 @@ function AnalysisBody() {
             setStreaming(false);
             setThinkingStep("");
         }
-    };
+    }, [userEmail, streaming, threadId, material, fetchThreads]);
+
+    // Initial analysis trigger (runs once after material loads, ONLY for new sessions)
+    useEffect(() => {
+        if (!material || !userEmail || hasInitialized.current || messages.length > 0 || existingThreadId) return;
+
+        hasInitialized.current = true;
+
+        // Brief delay to ensure UI is ready
+        setTimeout(() => {
+            const docName = activeAttachment ? activeAttachment.title : material.title;
+            const initQuery = `Analyze and summarize this "${docName}". Give an executive summary and 3 suggested inquiries.`;
+            sendMessage(initQuery, material.content || "");
+        }, 1000);
+    }, [material, userEmail, activeAttachment, messages.length, existingThreadId, sendMessage]);
 
     /* ─────────────── LOADING STATE ─────────────── */
     if (loading) {

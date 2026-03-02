@@ -61,6 +61,35 @@ async def list_threads(user_email: str, db: Session = Depends(get_db)):
         "thread_type": t.thread_type or "chat"
     } for t in threads]
 
+@router.get("/threads/find")
+async def find_thread(
+    user_email: str, 
+    material_id: str = None, 
+    thread_type: str = "analysis",
+    db: Session = Depends(get_db)
+):
+    actual_email = standardize_email(user_email)
+    user = db.query(User).filter(User.email == actual_email).first()
+    if not user: return None
+    
+    query = db.query(ChatThread).filter(ChatThread.user_id == user.id)
+    if material_id:
+        query = query.filter(ChatThread.material_id == material_id)
+    
+    if thread_type:
+        query = query.filter(ChatThread.thread_type == thread_type)
+        
+    thread = query.order_by(ChatThread.updated_at.desc()).first()
+    if not thread:
+        return {"id": None}
+    
+    return {
+        "id": thread.id,
+        "title": thread.title,
+        "material_id": thread.material_id,
+        "thread_type": thread.thread_type
+    }
+
 @router.get("/threads/{thread_id}/messages")
 async def get_thread_messages(thread_id: str, user_email: str, db: Session = Depends(get_db)):
     actual_email = standardize_email(user_email)
@@ -119,19 +148,38 @@ async def chat_stream(
         raise HTTPException(status_code=404, detail="User registration required.")
         
     # 1. Atomic Thread Logic
-    # Resolve material_id for analysis threads
-    mat_id = material_id if query_type == "notebook_analysis" else None
+    # Resolve material_id and type for analysis threads
+    mat_id = material_id if (query_type == "notebook_analysis" or material_id) else None
+    t_type = "analysis" if mat_id else (query_type if query_type else "chat")
 
     if thread_id == "new":
         thread_id = str(uuid.uuid4())
-        thread = ChatThread(id=thread_id, user_id=user.id, title=message[:40], material_id=mat_id)
+        thread = ChatThread(
+            id=thread_id, 
+            user_id=user.id, 
+            title=message[:40], 
+            material_id=mat_id,
+            course_id=course_id,
+            thread_type=t_type
+        )
         db.add(thread)
     else:
         thread = db.query(ChatThread).filter(ChatThread.id == thread_id).first()
         if not thread:
             thread_id = str(uuid.uuid4())
-            thread = ChatThread(id=thread_id, user_id=user.id, title=message[:40], material_id=mat_id)
+            thread = ChatThread(
+                id=thread_id, 
+                user_id=user.id, 
+                title=message[:40], 
+                material_id=mat_id,
+                course_id=course_id,
+                thread_type=t_type
+            )
             db.add(thread)
+        elif not thread.thread_type: # Backfill old threads
+            thread.thread_type = t_type
+            if course_id: thread.course_id = course_id
+            if mat_id: thread.material_id = mat_id
 
     attachment_base64 = None
     file_name, file_type = None, None
