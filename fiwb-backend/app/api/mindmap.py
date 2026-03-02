@@ -150,16 +150,21 @@ async def generate_mindmap(
     # Initialize Drive service for extracting content from attachments
     drive_service = DriveSyncService(user.access_token, user.email, user.refresh_token)
 
-    # Build content blocks — cap each at 3000 chars to stay within context
+    # Build content blocks
     content_blocks = []
-    source_list = []
     total_chars = 0
-    MAX_CHARS = 40000
+    
+    # If single document: Increase context limit to support full document analysis (NotebookCore level)
+    # If multiple/all: Keep the 40k cap to ensure high-density speed.
+    is_single_doc = len(materials) == 1
+    MAX_CHARS = 200000 if is_single_doc else 40000
+    CHAR_LIMIT_PER_FILE = None if is_single_doc else 5000
 
     async def process_material(m):
         material_text = f"[MATERIAL: {m.title}]\n"
         if m.content:
-            material_text += m.content[:5000]
+            text_to_add = m.content if CHAR_LIMIT_PER_FILE is None else m.content[:CHAR_LIMIT_PER_FILE]
+            material_text += text_to_add
         else:
             material_text += "(No text content)"
 
@@ -180,7 +185,8 @@ async def generate_mindmap(
                         if isinstance(doc_content, str) and doc_content:
                             title = tasks[i][0]
                             material_text += f"\n--- [ATTACHMENT: {title}] ---\n"
-                            material_text += doc_content[:5000]
+                            text_to_add = doc_content if CHAR_LIMIT_PER_FILE is None else doc_content[:CHAR_LIMIT_PER_FILE]
+                            material_text += text_to_add
             except Exception as e:
                 logger.warning(f"[MindMap] Failed to extract attachments for {m.id}: {e}")
         

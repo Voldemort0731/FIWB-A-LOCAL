@@ -180,13 +180,6 @@ export default function CoursePage() {
 
                         <div className="flex items-center gap-3">
                             {/* Mind Map Button */}
-                            <button
-                                onClick={() => router.push(`/mindmap/${course?.id}`)}
-                                className="flex items-center gap-2 px-5 py-3.5 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/30 hover:border-indigo-500/50 rounded-2xl text-sm font-black text-indigo-300 transition-all cursor-pointer group"
-                            >
-                                <Network size={16} className="text-indigo-400 group-hover:scale-110 transition-transform" />
-                                Mind Map
-                            </button>
                             <div className="relative w-72 group">
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-blue-500 transition-colors" size={18} />
                                 <input
@@ -353,6 +346,16 @@ export default function CoursePage() {
                                                                         Analyze with AI
                                                                     </button>
                                                                     <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            router.push(`/mindmap/${course_id}?material=${item.id}`);
+                                                                        }}
+                                                                        className="px-6 py-3 glass-dark hover:bg-indigo-600/10 border border-white/5 hover:border-indigo-500/20 rounded-2xl text-xs font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center gap-2 cursor-pointer"
+                                                                    >
+                                                                        <Network size={14} />
+                                                                        Mind Map
+                                                                    </button>
+                                                                    <button
                                                                         onClick={(e) => { e.stopPropagation(); setSelectedItem(item); }}
                                                                         className="px-6 py-3 glass-dark hover:bg-white/5 border border-white/5 rounded-2xl text-xs font-black uppercase tracking-widest text-gray-400 transition-all cursor-pointer"
                                                                     >
@@ -415,6 +418,16 @@ export default function CoursePage() {
                                                         >
                                                             <Sparkles size={12} />
                                                             Analyze
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                router.push(`/mindmap/${course_id}?material=${item.id}`);
+                                                            }}
+                                                            className="px-4 py-2 glass-dark hover:bg-indigo-600/10 border border-white/5 hover:border-indigo-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest text-indigo-400 transition-all flex items-center gap-2 opacity-0 group-hover:opacity-100 cursor-pointer"
+                                                        >
+                                                            <Network size={12} />
+                                                            Mind Map
                                                         </button>
                                                         <div className="w-10 h-10 rounded-full border border-white/5 flex items-center justify-center group-hover:border-blue-500/30 transition-colors">
                                                             <ChevronRight size={18} className="text-gray-600 group-hover:text-blue-400 transition-transform group-hover:translate-x-0.5" />

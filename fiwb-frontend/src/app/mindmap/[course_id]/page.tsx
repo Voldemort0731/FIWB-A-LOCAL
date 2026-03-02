@@ -203,12 +203,9 @@ function MindMapBody() {
     const [error, setError] = useState<string | null>(null);
     const [graphData, setGraphData] = useState<GraphData | null>(null);
     const [availableSources, setAvailableSources] = useState<SourceMaterial[]>([]);
-    const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
     const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
     const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
-    const [showColorBy, setShowColorBy] = useState<"level" | "source">("level");
-    const [layoutMode, setLayoutMode] = useState<"hierarchical" | "radial">("hierarchical");
     const [threads, setThreads] = useState<any[]>([]);
 
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -281,6 +278,9 @@ function MindMapBody() {
         setSelectedNode(null);
         setFocusedNodeId(null);
 
+        const targetMatId = searchParams.get("material");
+        const materialIds = customIds || (targetMatId ? [targetMatId] : undefined);
+
         try {
             const res = await fetch(`${API_URL}/api/mindmap/generate`, {
                 method: "POST",
@@ -289,9 +289,7 @@ function MindMapBody() {
                     user_email: userEmail,
                     course_id,
                     thread_id: searchParams.get("thread"),
-                    material_ids: customIds || (selectedSourceIds.size > 0
-                        ? Array.from(selectedSourceIds)
-                        : undefined),
+                    material_ids: materialIds,
                 }),
             });
             if (!res.ok) {
@@ -305,12 +303,8 @@ function MindMapBody() {
 
             // If this is a document-specific mindmap, sync the reader
             if (data.material_id) {
-                const sourcesToUse = customSources || availableSources;
-                const found = sourcesToUse.find(s => s.id === data.material_id);
-                if (found) {
-                    setActiveMaterialId(found.file_id || data.material_id);
-                    setShowReader(true);
-                }
+                setActiveMaterialId(data.material_id);
+                setShowReader(true);
             }
 
             // Update URL with thread ID for persistence
@@ -334,7 +328,7 @@ function MindMapBody() {
         } finally {
             setGenerating(false);
         }
-    }, [course_id, userEmail, selectedSourceIds, buildFlowGraph, router, searchParams, availableSources]);
+    }, [course_id, userEmail, buildFlowGraph, router, searchParams]);
 
     /* ── Fetch sidebar threads ── */
     useEffect(() => {
@@ -375,9 +369,11 @@ function MindMapBody() {
                         handleGenerate([targetMatId], data);
                     }
                 }
-                // Default: Select all materials
+                // Default: Course-wide map is no longer supported directly. 
+                // We show an error or blank state if no material is provided.
                 else {
-                    setSelectedSourceIds(new Set(data.map((s: SourceMaterial) => s.id)));
+                    setLoading(false);
+                    setError("Please select a document from the course page to generate its concept graph.");
                 }
             })
             .catch(err => {
@@ -454,25 +450,9 @@ function MindMapBody() {
         })));
     }, [searchQuery]);
 
-    const toggleSource = (id: string) => {
-        setSelectedSourceIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    };
-
     const clearFocus = () => {
         setFocusedNodeId(null);
         setSelectedNode(null);
-    };
-
-    const typeIcon = (type: string) => {
-        if (type === "announcement") return "📢";
-        if (type === "assignment") return "📝";
-        if (type === "material") return "📚";
-        return "📄";
     };
 
     return (
@@ -598,72 +578,34 @@ function MindMapBody() {
                                     </div>
                                 )}
                             </motion.div>
-                        )}
                     </AnimatePresence>
-                    {/* Left Sources Panel */}
-                    <div className="w-72 border-r border-white/5 bg-black/40 backdrop-blur overflow-y-auto flex-shrink-0 flex flex-col">
-                        <div className="p-5 border-b border-white/5">
-                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-3">Document Sources</p>
 
-                            {loading ? (
-                                <div className="space-y-2">
-                                    {[1, 2, 3].map(i => <div key={i} className="h-8 bg-white/5 rounded-lg animate-pulse" />)}
-                                </div>
-                            ) : availableSources.length === 0 ? (
-                                <p className="text-xs text-gray-500">No materials found. Sync your course first.</p>
-                            ) : (
-                                <div className="space-y-1.5">
-                                    {availableSources.map(src => (
-                                        <button
-                                            key={src.id}
-                                            onClick={() => toggleSource(src.id)}
-                                            className={clsx(
-                                                "w-full flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all text-xs",
-                                                selectedSourceIds.has(src.id)
-                                                    ? "bg-indigo-600/10 border-indigo-500/30 text-indigo-200"
-                                                    : "bg-white/3 border-white/5 text-gray-500 hover:text-gray-300"
-                                            )}
-                                        >
-                                            <div className={clsx(
-                                                "w-4 h-4 rounded-md border flex items-center justify-center flex-shrink-0",
-                                                selectedSourceIds.has(src.id)
-                                                    ? "bg-indigo-500 border-indigo-400"
-                                                    : "border-white/20"
-                                            )}>
-                                                {selectedSourceIds.has(src.id) && <CheckCircle2 size={10} className="text-white" />}
-                                            </div>
-                                            <span className="text-[8px] mr-1">{typeIcon(src.type)}</span>
-                                            <span className="truncate font-semibold leading-tight">{src.title}</span>
-                                        </button>
+                    {/* Left Panel: Legend & Stats only (Sidebar removed as it's per-doc now) */}
+                    <div className="w-64 border-r border-white/5 bg-black/40 backdrop-blur overflow-y-auto flex-shrink-0 flex flex-col">
+                        <div className="p-5 border-b border-white/5">
+                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-1">Active Concept Graph</p>
+                            <h3 className="text-sm font-bold text-white mb-4 line-clamp-2">
+                                {availableSources.find(s => s.id === searchParams.get("material"))?.title || "Document Analysis"}
+                            </h3>
+
+                            {graphData && (
+                                <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-white/5">
+                                    {[
+                                        { label: "Nodes", val: graphData.nodes.length },
+                                        { label: "Edges", val: graphData.edges.length },
+                                    ].map(s => (
+                                        <div key={s.label} className="bg-white/5 rounded-lg p-2 text-center">
+                                            <p className="text-base font-black text-white">{s.val}</p>
+                                            <p className="text-[8px] text-gray-500 uppercase tracking-wider">{s.label}</p>
+                                        </div>
                                     ))}
                                 </div>
                             )}
                         </div>
 
-                        {/* Generate Button */}
-                        <div className="p-5 space-y-3">
-                            <button
-                                onClick={() => handleGenerate()}
-                                disabled={generating || selectedSourceIds.size === 0}
-                                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl font-bold text-sm transition-all bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-500/20 cursor-pointer disabled:bg-white/5 disabled:text-gray-500 disabled:cursor-not-allowed"
-                            >
-                                {generating ? (
-                                    <><Loader2 size={14} className="animate-spin" /> Generating...</>
-                                ) : (
-                                    <><Sparkles size={14} /> {graphData ? "Regenerate" : "Generate Mind Map"}</>
-                                )}
-                            </button>
-
-                            {selectedSourceIds.size > 0 && (
-                                <p className="text-[9px] text-gray-500 text-center">
-                                    {selectedSourceIds.size} of {availableSources.length} sources selected
-                                </p>
-                            )}
-                        </div>
-
                         {/* Legend */}
-                        <div className="px-5 pb-5 space-y-3">
-                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600">Edge Types</p>
+                        <div className="px-5 py-5 space-y-3">
+                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600">Relationships</p>
                             {[
                                 { label: "Hierarchical", color: "#6366f1", dash: undefined },
                                 { label: "Related", color: "#06b6d4", dash: "dashed" },
@@ -677,12 +619,12 @@ function MindMapBody() {
                             ))}
 
                             <div className="pt-2 space-y-1.5">
-                                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600">Node Levels</p>
+                                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600">Context Levels</p>
                                 {[
-                                    { label: "Root Topic", color: "#6366f1" },
-                                    { label: "Main Topics", color: "#06b6d4" },
-                                    { label: "Subtopics", color: "#10b981" },
-                                    { label: "Details", color: "#f59e0b" },
+                                    { label: "Core Concept", color: "#6366f1" },
+                                    { label: "Key Pillar", color: "#06b6d4" },
+                                    { label: "Subtopic", color: "#10b981" },
+                                    { label: "Detail", color: "#f59e0b" },
                                 ].map(l => (
                                     <div key={l.label} className="flex items-center gap-2">
                                         <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: l.color }} />
@@ -692,24 +634,15 @@ function MindMapBody() {
                             </div>
                         </div>
 
-                        {graphData && (
-                            <div className="px-5 pb-5 border-t border-white/5 pt-4 space-y-1">
-                                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-600 mb-2">Graph Stats</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {[
-                                        { label: "Nodes", val: graphData.nodes.length },
-                                        { label: "Edges", val: graphData.edges.length },
-                                        { label: "Sources", val: graphData.total_materials },
-                                        { label: "Levels", val: Math.max(...graphData.nodes.map(n => n.level)) + 1 },
-                                    ].map(s => (
-                                        <div key={s.label} className="bg-white/5 rounded-lg p-2 text-center">
-                                            <p className="text-base font-black text-white">{s.val}</p>
-                                            <p className="text-[8px] text-gray-500 uppercase tracking-wider">{s.label}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                        <div className="mt-auto p-5 border-t border-white/5">
+                            <button
+                                onClick={() => router.push(`/course/${course_id}`)}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 transition-all cursor-pointer group"
+                            >
+                                <ChevronLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
+                                Back to Course
+                            </button>
+                        </div>
                     </div>
 
                     {/* Graph Canvas */}
@@ -732,7 +665,7 @@ function MindMapBody() {
                                     <div>
                                         <h2 className="text-2xl font-black text-white mb-2">AI Concept Graph</h2>
                                         <p className="text-sm text-gray-500 max-w-xs">
-                                            Select your course materials on the left, then click <span className="text-indigo-400 font-bold">Generate Mind Map</span> to extract and visualize all key concepts.
+                                            Return to your course and click <span className="text-indigo-400 font-bold">Mind Map</span> under any document to visualize its key concepts with full-context accuracy.
                                         </p>
                                     </div>
                                     <div className="grid grid-cols-3 gap-3 mt-2">
