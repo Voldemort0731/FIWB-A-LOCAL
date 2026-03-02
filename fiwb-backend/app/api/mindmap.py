@@ -135,15 +135,14 @@ async def generate_mindmap(
         raise HTTPException(status_code=403, detail="Course not found or access denied")
 
     # Fetch materials
-    if not material_ids:
-        raise HTTPException(status_code=400, detail="Please select at least one document for NotebookCore analysis.")
-
     query = db.query(Material).filter(
         Material.course_id == course_id,
         or_(Material.user_id == user.id, Material.user_id == None)
-    ).filter(Material.id.in_(material_ids))
+    )
+    if material_ids:
+        query = query.filter(Material.id.in_(material_ids))
 
-    materials = query.order_by(Material.created_at.desc()).all() # No limit, use full selection
+    materials = query.order_by(Material.created_at.desc()).limit(20).all()
 
     if not materials:
         raise HTTPException(status_code=404, detail="No materials found for this course. Please sync your course first.")
@@ -151,16 +150,16 @@ async def generate_mindmap(
     # Initialize Drive service for extracting content from attachments
     drive_service = DriveSyncService(user.access_token, user.email, user.refresh_token)
 
-    # Build content blocks — use massive context similar to NotebookCore
+    # Build content blocks — cap each at 3000 chars to stay within context
     content_blocks = []
     source_list = []
     total_chars = 0
-    MAX_CHARS = 200000 
+    MAX_CHARS = 40000
 
     async def process_material(m):
         material_text = f"[MATERIAL: {m.title}]\n"
         if m.content:
-            material_text += m.content # FULL CONTENT
+            material_text += m.content[:5000]
         else:
             material_text += "(No text content)"
 
@@ -181,7 +180,7 @@ async def generate_mindmap(
                         if isinstance(doc_content, str) and doc_content:
                             title = tasks[i][0]
                             material_text += f"\n--- [ATTACHMENT: {title}] ---\n"
-                            material_text += doc_content # FULL ATTACHMENT CONTENT
+                            material_text += doc_content[:5000]
             except Exception as e:
                 logger.warning(f"[MindMap] Failed to extract attachments for {m.id}: {e}")
         
