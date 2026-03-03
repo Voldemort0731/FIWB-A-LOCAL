@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -8,7 +8,7 @@ import {
     Plus, MessageCircle, Trash2, TrendingUp, Cloud, BookOpen,
     Network, Edit2, Check, X as XIcon, FolderPlus, Folder,
     FolderOpen, ChevronDown, ChevronRight, MoreHorizontal,
-    Tag, Palette
+    Tag
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import DriveSyncModal from "@/components/DriveSyncModal";
