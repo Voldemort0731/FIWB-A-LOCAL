@@ -52,15 +52,22 @@ async def list_threads(user_email: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == actual_email).first()
     if not user: return []
     threads = db.query(ChatThread).filter(ChatThread.user_id == user.id).order_by(ChatThread.updated_at.desc()).all()
-    return [{
-        "id": t.id,
-        "title": t.title,
-        "updated_at": t.updated_at,
-        "material_id": t.material_id,
-        "course_id": t.course_id,
-        "thread_type": t.thread_type or "chat",
-        "group_id": t.group_id
-    } for t in threads]
+    result = []
+    for t in threads:
+        try:
+            result.append({
+                "id": t.id,
+                "title": t.title,
+                "updated_at": t.updated_at,
+                "material_id": getattr(t, "material_id", None),
+                "course_id": getattr(t, "course_id", None),
+                "thread_type": (getattr(t, "thread_type", None) or "chat"),
+                "group_id": getattr(t, "group_id", None)
+            })
+        except Exception:
+            result.append({"id": t.id, "title": t.title, "updated_at": t.updated_at,
+                           "material_id": None, "course_id": None, "thread_type": "chat", "group_id": None})
+    return result
 
 @router.get("/threads/find")
 async def find_thread(

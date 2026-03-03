@@ -86,6 +86,7 @@ async def on_startup():
             "ALTER TABLE chat_threads ADD COLUMN course_id VARCHAR",
             "ALTER TABLE chat_threads ADD COLUMN thread_type VARCHAR DEFAULT 'chat'",
             "ALTER TABLE chat_threads ADD COLUMN mindmap_data TEXT",
+            "ALTER TABLE chat_threads ADD COLUMN group_id VARCHAR",
         ]
         def run_migrations():
             with engine.connect() as conn:
