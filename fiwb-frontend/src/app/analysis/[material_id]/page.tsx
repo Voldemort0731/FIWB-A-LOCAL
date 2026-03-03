@@ -416,6 +416,8 @@ function AnalysisBody() {
     }, [activeAttachment, userEmail]);
 
     // Main send message function
+    // `isInitialAnalysis` is true only for the first auto-triggered call - it passes the raw doc content.
+    // For all subsequent user queries, we pass conversation history so the AI has context.
     const sendMessage = useCallback(async (query: string, attachmentText?: string) => {
         if (!query.trim() || streaming) return;
 
@@ -424,6 +426,14 @@ function AnalysisBody() {
         setInput("");
         setStreaming(true);
         setThinkingStep("Analyzing document context...");
+
+        // Build conversation history from current messages (for context continuity)
+        // Only include completed (non-streaming) messages with actual content
+        const currentMessages = messages.filter(m => m.content && !m.thinking);
+        const conversationHistory = currentMessages.map(m => ({
+            role: m.role,
+            content: m.content
+        }));
 
         try {
             const formData = new FormData();
@@ -434,9 +444,18 @@ function AnalysisBody() {
             if (material?.course_id) formData.append("course_id", material.course_id);
             if (material?.id) formData.append("material_id", material.id);
 
-            // Pass document content for grounding
-            const textToSend = attachmentText || material?.content || "";
-            if (textToSend) formData.append("attachment_text", textToSend);
+            // CRITICAL FIX:
+            // - For the initial auto-analysis, pass the document text directly (attachmentText will be set).
+            //   This bootstraps the AI with full doc content before the thread is indexed.
+            // - For all follow-up user questions, pass conversation history instead.
+            //   The backend's RAG will retrieve relevant doc chunks via material_id.
+            if (attachmentText) {
+                // Initial analysis call - inject doc content for immediate grounding
+                formData.append("attachment_text", attachmentText);
+            } else if (conversationHistory.length > 0) {
+                // Follow-up question - send short-term history for conversational context
+                formData.append("history", JSON.stringify(conversationHistory.slice(-10))); // Last 10 turns
+            }
 
             const response = await fetch(`${API_URL}/api/chat/stream`, {
                 method: "POST",
@@ -543,7 +562,7 @@ function AnalysisBody() {
             setStreaming(false);
             setThinkingStep("");
         }
-    }, [userEmail, streaming, threadId, material, fetchThreads]);
+    }, [userEmail, streaming, threadId, material, fetchThreads, messages]);
 
     // Initial analysis trigger (runs once after material loads, ONLY for new sessions)
     useEffect(() => {
