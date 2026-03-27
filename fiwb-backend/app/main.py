@@ -29,6 +29,7 @@ app.add_middleware(
     allow_origins=[
         "https://app.fiwbai.xyz",
         "https://fiwb-a-local.vercel.app",
+        "https://web-production-847ea.up.railway.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         os.getenv("FRONTEND_URL", "https://app.fiwbai.xyz")

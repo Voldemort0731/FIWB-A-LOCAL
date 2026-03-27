@@ -1,4 +1,4 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://passionate-patience-production-a232.up.railway.app';
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://web-production-847ea.up.railway.app';
 
 export const standardize_email = (email: string | null): string => {
     if (!email) return "";
