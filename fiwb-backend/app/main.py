@@ -31,6 +31,7 @@ app.add_middleware(
         "https://fiwb-a-local.vercel.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        os.getenv("FRONTEND_URL", "https://app.fiwbai.xyz")
     ],
     allow_credentials=True,
     allow_methods=["*"],
