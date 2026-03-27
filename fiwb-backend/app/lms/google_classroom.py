@@ -58,34 +58,24 @@ class GoogleClassroomClient:
             return await asyncio.to_thread(request_fn)
 
     async def get_courses(self):
-        """Fetch all active courses. Sequential (not parallel) to avoid httplib2 segfault."""
+        """Fetch all active courses. Simpler single call is more reliable."""
         service = await self._get_service()
 
-        # IMPORTANT: Do NOT use asyncio.gather here.
-        # Running two asyncio.to_thread calls on the same httplib2-backed service
-        # object simultaneously causes a segmentation fault in Python 3.12.
-        student_courses = []
-        teacher_courses = []
-
         try:
+            logger.info("Fetching courses from Google...")
+            # Calling list() without studentId/teacherId returns all relevant courses
             result = await self._execute(
-                lambda: service.courses().list(studentId='me', courseStates=['ACTIVE']).execute()
+                lambda: service.courses().list(courseStates=['ACTIVE']).execute()
             )
-            student_courses = result.get('courses', [])
+            courses = result.get('courses', [])
+            logger.info(f"Successfully fetched {len(courses)} courses from Google.")
+            return courses
         except Exception as e:
-            logger.warning(f"Student courses fetch failed: {e}")
+            logger.error(f"Failed to fetch courses from Google: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
 
-        try:
-            result = await self._execute(
-                lambda: service.courses().list(teacherId='me', courseStates=['ACTIVE']).execute()
-            )
-            teacher_courses = result.get('courses', [])
-        except Exception as e:
-            logger.warning(f"Teacher courses fetch failed: {e}")
-
-        all_courses = student_courses + teacher_courses
-        unique = {c['id']: c for c in all_courses}
-        return list(unique.values())
 
     async def get_coursework(self, course_id: str):
         """Fetch assignments for a course."""

@@ -61,11 +61,13 @@ class LMSSyncService:
 
             # Upsert courses into DB
             active_ids = set()
+            logger.info(f"[Sync] Processing {len(courses_data)} courses for DB update...")
             for c in courses_data:
                 cid = c['id']
                 active_ids.add(cid)
                 db_course = db.query(Course).filter(Course.id == cid).first()
                 if not db_course:
+                    logger.info(f"[Sync] Creating NEW course: {c['name']} ({cid})")
                     db_course = Course(
                         id=cid,
                         name=c['name'],
@@ -74,11 +76,17 @@ class LMSSyncService:
                     )
                     db.add(db_course)
                 else:
+                    logger.info(f"[Sync] Updating EXISTING course: {c['name']} ({cid})")
                     db_course.name = c['name']
 
                 if db_course not in user.courses:
+                    logger.info(f"[Sync] Linking course {cid} to user {self.user_email}")
                     user.courses.append(db_course)
                 db_course.last_synced = datetime.utcnow()
+            
+            db.commit()
+            logger.info(f"[Sync] Committed course updates. User now has {len(user.courses)} courses.")
+
 
             # Cleanup: Remove courses not in Google anymore.
             # SAFETY GUARD: Only run cleanup if we actually got data back.
